@@ -8,7 +8,7 @@ block_cipher = None
 
 BASE_DIR = os.path.abspath(SPECPATH)
 
-# 1. Gom các file dữ liệu cần thiết (Model PaddleX, Icon)
+# 1. Gom các file dữ liệu cần thiết (Model, Config, Icon)
 datas = [
     (os.path.join(BASE_DIR, 'requirements.txt'), '.'),
     (os.path.join(BASE_DIR, 'app_icon.ico'), '.'),
@@ -18,21 +18,30 @@ models_dir = os.path.join(BASE_DIR, 'models')
 if os.path.exists(models_dir):
     datas.append((models_dir, 'models'))
 
-# 2. Gom các DLL của PyTorch và Paddle để khắc phục triệt để WinError 127
+# 2. Gom các DLL của PyTorch và Paddle động để khắc phục triệt để WinError 127
 binaries = []
-torch_lib_dir = r'D:\python\Lib\site-packages\torch\lib'
-if os.path.exists(torch_lib_dir):
-    for dll_file in glob.glob(os.path.join(torch_lib_dir, '*.dll')):
-        binaries.append((dll_file, '.'))
-        binaries.append((dll_file, 'torch/lib'))
 
-paddle_libs_dir = r'D:\python\Lib\site-packages\paddle\libs'
-if os.path.exists(paddle_libs_dir):
-    for dll_file in glob.glob(os.path.join(paddle_libs_dir, '*.dll')):
-        binaries.append((dll_file, '.'))
-        binaries.append((dll_file, 'paddle/libs'))
+try:
+    import torch
+    torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), 'lib')
+    if os.path.exists(torch_lib_dir):
+        for dll_file in glob.glob(os.path.join(torch_lib_dir, '*.dll')):
+            binaries.append((dll_file, '.'))
+            binaries.append((dll_file, 'torch/lib'))
+except Exception:
+    pass
 
-# 3. Thu thập toàn bộ submodules của PaddleX và PaddleOCR
+try:
+    import paddle
+    paddle_libs_dir = os.path.join(os.path.dirname(paddle.__file__), 'libs')
+    if os.path.exists(paddle_libs_dir):
+        for dll_file in glob.glob(os.path.join(paddle_libs_dir, '*.dll')):
+            binaries.append((dll_file, '.'))
+            binaries.append((dll_file, 'paddle/libs'))
+except Exception:
+    pass
+
+# 3. Thu thập toàn bộ submodules của ONNX Runtime, RapidOCR, PaddleOCR, VietOCR, PyTorch
 hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
@@ -43,14 +52,24 @@ hiddenimports = [
     'pandas',
     'openpyxl',
     'rapidfuzz',
+    'onnxruntime',
+    'rapidocr_onnxruntime',
     'paddle',
     'paddleocr',
     'paddlex',
+    'vietocr',
+    'torch',
+    'torchvision',
+    'yaml',
+    'PIL',
     'ocr_engine',
 ]
 try:
-    hiddenimports += collect_submodules('paddlex')
+    hiddenimports += collect_submodules('rapidocr_onnxruntime')
+    hiddenimports += collect_submodules('onnxruntime')
+    hiddenimports += collect_submodules('vietocr')
     hiddenimports += collect_submodules('paddleocr')
+    hiddenimports += collect_submodules('paddlex')
 except Exception:
     pass
 
@@ -63,7 +82,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib', 'tkinter', 'notebook', 'pytest', 'IPython'],
+    excludes=['tkinter', 'notebook', 'pytest', 'IPython'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

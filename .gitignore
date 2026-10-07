@@ -7,5 +7,9 @@ build/
 *.log
 models/official_models/
 models/temp/
+models/onnx/
+*.pth
+*.onnx
+.venv/
 *.egg-info/
 .env

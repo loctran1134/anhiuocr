@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 chcp 65001 > nul
 title Build Anhiu OCR - Standalone Package (.exe)
 echo ========================================================
@@ -6,16 +7,21 @@ echo        BẮT ĐẦU ĐÓNG GÓI ANHIU OCR THÀNH .EXE ĐỘC LẬP
 echo ========================================================
 echo.
 
+set PYTHON_EXEC=python
+if exist ".venv\Scripts\python.exe" (
+    set PYTHON_EXEC=.venv\Scripts\python.exe
+)
+
 if not exist "app_icon.ico" (
     echo [1/3] Đang tạo icon ứng dụng app_icon.ico...
-    python create_icon.py
+    %PYTHON_EXEC% create_icon.py
 ) else (
     echo [1/3] Đã tìm thấy app_icon.ico.
 )
 
 echo.
-echo [2/3] Đang chạy PyInstaller build gói AnhiuOCR (có thể mất 1-3 phút)...
-python -m PyInstaller --noconfirm --clean anhiu.spec
+echo [2/3] Đang chạy PyInstaller build gói AnhiuOCR...
+%PYTHON_EXEC% -m PyInstaller --noconfirm --clean anhiu.spec
 
 if errorlevel 1 (
     echo.

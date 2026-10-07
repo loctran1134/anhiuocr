@@ -18,17 +18,18 @@ from ocr_engine import TimemarkOCREngine
 
 def load_image_unicode(file_path: str):
     try:
+        from PIL import Image, ImageOps
+        pil_img = Image.open(file_path)
+        pil_img = ImageOps.exif_transpose(pil_img)
+        return cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+    except Exception:
+        pass
+    try:
         with open(file_path, "rb") as f:
             file_bytes = np.frombuffer(f.read(), dtype=np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             if img is not None:
                 return img
-    except Exception:
-        pass
-    try:
-        from PIL import Image
-        pil_img = Image.open(file_path).convert("RGB")
-        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     except Exception:
         pass
     return None
@@ -38,7 +39,38 @@ def main():
     parser.add_argument("--folder", type=str, help="Đường dẫn thư mục chứa ảnh Timemark")
     parser.add_argument("--files", nargs="+", help="Danh sách các file ảnh")
     parser.add_argument("--output", type=str, default="ket_qua_diem_ban.xlsx", help="Tên file Excel xuất ra")
+    parser.add_argument("--export-json", type=str, help="Xuất dữ liệu OCR thô ra file JSON + Prompt cho Gemini")
+    parser.add_argument("--import-json", type=str, help="Nạp file JSON đã được Gemini làm sạch để chấm điểm bán ngay")
     args = parser.parse_args()
+
+    engine = TimemarkOCREngine()
+
+    # Nạp trực tiếp từ JSON đã làm sạch bởi Gemini nếu có
+    if args.import_json:
+        import json
+        if not os.path.exists(args.import_json):
+            print(f"Lỗi: Không tìm thấy file JSON: {args.import_json}")
+            sys.exit(1)
+        with open(args.import_json, 'r', encoding='utf-8') as f:
+            cleaned_data = json.load(f)
+        print(f"\n[GEMINI IMPORT] Đang chấm điểm bán từ {len(cleaned_data)} bản ghi JSON đã làm sạch...")
+        result = engine.group_from_cleaned_records(cleaned_data)
+        summary = result["summary"]
+        details = result["details"]
+        print("\n-------------------------------------------------------")
+        print("### BÁO CÁO KẾT QUẢ TỪ JSON ĐÃ LÀM SẠCH (GEMINI)")
+        print(f"- Tổng số ảnh: {summary.get('total_images', 0)}")
+        print(f"- TỔNG SỐ ĐIỂM BÁN HỢP LỆ: {summary.get('valid_stores', 0)} điểm")
+        print(f"  + Số điểm đạt chuẩn (2 ảnh): {summary.get('standard_stores', 0)}")
+        print(f"  + Số điểm thiếu/dư/cảnh báo: {summary.get('warning_total', 0)}")
+        print("-------------------------------------------------------\n")
+        df = pd.DataFrame(details)
+        if not df.empty:
+            df = df.rename(columns={"stt": "STT", "address": "Địa chỉ", "count": "Số ảnh", "files": "Danh sách file"})
+            print(df.to_string(index=False))
+            df.to_excel(args.output, index=False)
+            print(f"\n[XUẤT FILE] Đã lưu kết quả Excel vào file: {os.path.abspath(args.output)}")
+        sys.exit(0)
 
     file_paths = []
     if args.folder:
@@ -48,7 +80,7 @@ def main():
     elif args.files:
         file_paths = args.files
     else:
-        print("Vui lòng chỉ định --folder hoặc --files. Ví dụ: python cli.py --folder ./data")
+        print("Vui lòng chỉ định --folder, --files hoặc --import-json. Ví dụ: python cli.py --folder ./data")
         sys.exit(1)
 
     if not file_paths:
@@ -93,13 +125,16 @@ def main():
     details = result["details"]
 
     print("\n-------------------------------------------------------")
-    print("### BÁO CÁO KẾT QUẢ TÓM TẮT")
+    print("### BÁO CÁO KẾT QUẢ TÓM TẮT CHẤM CÔNG")
     print(f"- Tổng số ảnh đã xử lý: {summary.get('total_images', 0)}")
-    print(f"- TỔNG SỐ ĐIỂM BÁN HỢP LỆ (ĐÃ TÍNH): {summary.get('valid_stores', 0)}")
-    if summary.get('duplicate_images', 0) > 0:
-        print(f"- CẢNH BÁO ẢNH TRÙNG: {summary.get('duplicate_images')} ảnh trùng (thuộc {summary.get('duplicate_stores')} điểm bán; mỗi điểm đã tính 1 ảnh hợp lệ)")
+    print(f"- TỔNG SỐ ĐIỂM BÁN THỰC TẾ (ĐÃ TÍNH): {summary.get('valid_stores', 0)} điểm bán")
+    print(f"  + Số điểm đạt chuẩn (đủ 2 ảnh): {summary.get('standard_stores', 0)}")
+    if summary.get('duplicate_stores', 0) > 0:
+        print(f"  + Số điểm chụp dư (>2 ảnh): {summary.get('duplicate_stores', 0)} (dư {summary.get('duplicate_images', 0)} ảnh)")
+    if summary.get('single_stores', 0) > 0:
+        print(f"  + Số điểm thiếu ảnh (chỉ 1 ảnh): {summary.get('single_stores', 0)}")
     if summary.get('unrelated_images', 0) > 0:
-        print(f"- Ảnh không liên quan / lỗi: {summary.get('unrelated_images')}")
+        print(f"- Ảnh không liên quan / lỗi loại bỏ: {summary.get('unrelated_images')} ảnh")
     print("-------------------------------------------------------\n")
 
     print("### BẢNG CHI TIẾT")
@@ -116,8 +151,15 @@ def main():
         output_file = args.output
         df.to_excel(output_file, index=False)
         print(f"\n[XUẤT FILE] Đã lưu kết quả chi tiết vào file: {os.path.abspath(output_file)}")
+
+    if args.export_json:
+        raw_results = result.get("raw_ocr_results", [])
+        engine.export_to_gemini_json(raw_results, args.export_json, include_prompt_file=True)
+        print(f"\n[GEMINI EXPORT] Đã xuất file JSON thô cho Gemini tại: {os.path.abspath(args.export_json)}")
+        print(f"[GEMINI EXPORT] Kèm theo file Prompt: {os.path.abspath(os.path.splitext(args.export_json)[0] + '_prompt_gemini.txt')}")
     else:
-        print("Không có kết quả nào.")
+        if df.empty:
+            print("Không có kết quả nào.")
 
 if __name__ == "__main__":
     main()
