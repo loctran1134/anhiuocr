@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zalo Pack Collector</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <span class="badge">ZALO WEB</span>
+      <h1>Gom Pack Ảnh Điểm Bán</h1>
+    </div>
+    <p class="subtitle">Tự động gom ảnh theo nhân viên & mốc thời gian</p>
+  </div>
+
+  <div class="container">
+    <!-- Form điều khiển -->
+    <div class="form-group">
+      <div class="label-row">
+        <label for="employeeName">Nhân viên cần lấy ảnh:</label>
+        <button id="btnFetchMembers" class="btn-text" title="Lấy danh sách thành viên trong chat">Quét tên trong chat</button>
+      </div>
+      <div class="input-wrapper">
+        <input type="text" id="employeeName" list="memberList" placeholder="Nhập hoặc chọn tên nhân viên..." autocomplete="off">
+        <datalist id="memberList"></datalist>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group flex-1">
+        <div class="label-row">
+          <label for="targetDate">Ngày cần lấy:</label>
+          <label class="checkbox-label" title="Tích chọn để chỉ lấy ảnh trong ngày này"><input type="checkbox" id="chkDateFilter" checked> Lọc ngày</label>
+        </div>
+        <input type="date" id="targetDate">
+        <div class="quick-date-buttons">
+          <button type="button" id="btnDateToday" class="btn-quick-date active" title="Lấy ảnh gửi hôm nay">Hôm nay</button>
+          <button type="button" id="btnDateYesterday" class="btn-quick-date" title="Lấy ảnh gửi hôm qua">Hôm qua</button>
+          <button type="button" id="btnDateAll" class="btn-quick-date" title="Không lọc ngày, lấy tất cả ảnh trong chat">Tất cả ngày</button>
+        </div>
+      </div>
+      <div class="form-group w-100">
+        <label for="timeGap">Cách nhau (phút):</label>
+        <input type="number" id="timeGap" value="5" min="1" max="60" title="Khoảng thời gian tối đa để các ảnh được tính chung 1 pack">
+      </div>
+    </div>
+
+    <div class="btn-actions">
+      <button id="btnScan" class="btn-primary">Quét & Chia Pack</button>
+      <button id="btnScrollUp" class="btn-secondary" title="Cuộn ngược lên để Zalo tải tin nhắn cũ hơn">Cuộn lấy tin cũ</button>
+    </div>
+
+    <div id="statusMessage" class="status-box hidden"></div>
+
+    <!-- Kết quả Pack -->
+    <div id="resultsArea" class="results-area hidden">
+      <div class="results-header">
+        <div class="summary-text">
+          <span id="txtTotalImages" class="font-bold">0</span> ảnh &bull; 
+          <span id="txtTotalPacks" class="font-bold text-primary">0</span> Pack
+        </div>
+        <button id="btnDownloadZip" class="btn-download">Tải file ZIP</button>
+      </div>
+
+      <div id="packsList" class="packs-list">
+        <!-- Render danh sách pack ở đây -->
+      </div>
+    </div>
+  </div>
+
+  <script src="jszip.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

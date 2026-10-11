@@ -60,6 +60,17 @@ try:
 except Exception:
     pass
 
+try:
+    import torchvision
+    tv_dir = os.path.dirname(torchvision.__file__)
+    if os.path.exists(tv_dir):
+        try:
+            os.add_dll_directory(tv_dir)
+        except Exception:
+            pass
+except Exception:
+    pass
+
 from rapidocr_onnxruntime import RapidOCR
 from vietocr.tool.predictor import Predictor
 from vietocr.tool.config import Cfg

@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Store Visit Scorer",
+  "version": "1.0.0",
+  "description": "Tự động gửi dữ liệu JSON OCR sang Google Gemini để chấm điểm và thống kê số lượng điểm bán nhân viên đã đi.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "clipboardRead"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

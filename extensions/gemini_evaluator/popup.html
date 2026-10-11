@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Store Visit Scorer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <span class="badge">GEMINI AI</span>
+      <h1>Chấm Điểm Bán Hàng</h1>
+    </div>
+    <p class="subtitle">Gửi JSON OCR sang Web Gemini để đối soát & đếm điểm bán</p>
+  </div>
+
+  <div class="container">
+    <div class="input-header">
+      <label for="txtJson">Dữ liệu JSON từ OCR:</label>
+      <div class="input-actions">
+        <button id="btnPaste" class="btn-sm">Dán Clipboard</button>
+        <button id="btnOpenFile" class="btn-sm">Mở file</button>
+        <input type="file" id="fileInput" accept=".json,.txt" style="display: none;">
+        <button id="btnClear" class="btn-sm text-danger">Xóa</button>
+      </div>
+    </div>
+
+    <textarea id="txtJson" placeholder="Dán mảng JSON kết quả OCR vào đây:&#10;[&#10;  {&#10;    &quot;sr&quot;: &quot;Nguyễn Văn A&quot;,&#10;    &quot;address&quot;: &quot;123 ĐT943...&quot;,&#10;    &quot;time&quot;: &quot;13:00&quot;,&#10;    &quot;gps&quot;: &quot;10.29, 105.34&quot;&#10;  }&#10;]"></textarea>
+
+    <div class="settings-box">
+      <div class="setting-item">
+        <label class="checkbox-label">
+          <input type="checkbox" id="chkAutoSubmit" checked>
+          <span>Tự động bấm gửi sau khi nạp prompt vào Gemini</span>
+        </label>
+      </div>
+      <div class="setting-item">
+        <label for="cboMode">Quy chuẩn đối soát:</label>
+        <select id="cboMode">
+          <option value="standard">Đếm số điểm bán & Lọc trùng lặp (Khuyên dùng)</option>
+          <option value="strict">Kiểm tra gian lận nghiêm ngặt (Thời gian & GPS)</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="btnSendToGemini" class="btn-primary">Mở Web Gemini & Chấm điểm bán</button>
+
+    <div id="statusBox" class="status-box hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

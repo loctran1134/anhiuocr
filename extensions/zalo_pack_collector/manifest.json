@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Zalo Image Pack Collector",
+  "version": "1.0.0",
+  "description": "Thu thập ảnh check-in điểm bán của nhân viên trên Zalo Web, tự động chia thành từng Pack theo mốc thời gian.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://chat.zalo.me/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chat.zalo.me/*"],
+      "js": ["jszip.min.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

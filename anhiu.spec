@@ -18,7 +18,12 @@ models_dir = os.path.join(BASE_DIR, 'models')
 if os.path.exists(models_dir):
     datas.append((models_dir, 'models'))
 
-# 2. Gom các DLL của PyTorch và Paddle động để khắc phục triệt để WinError 127
+try:
+    datas += collect_data_files('torchvision')
+except Exception:
+    pass
+
+# 2. Gom các DLL của PyTorch, Torchvision và Paddle động để khắc phục WinError 127 và operator torchvision::nms does not exist
 binaries = []
 
 try:
@@ -32,6 +37,19 @@ except Exception:
     pass
 
 try:
+    import torchvision
+    tv_dir = os.path.dirname(torchvision.__file__)
+    # Gom toàn bộ file C++ extensions (.pyd) và DLL đi kèm của torchvision (khắc phục lỗi torchvision::nms does not exist)
+    for pyd_file in glob.glob(os.path.join(tv_dir, '*.pyd')):
+        binaries.append((pyd_file, 'torchvision'))
+        binaries.append((pyd_file, '.'))
+    for dll_file in glob.glob(os.path.join(tv_dir, '*.dll')):
+        binaries.append((dll_file, 'torchvision'))
+        binaries.append((dll_file, '.'))
+except Exception:
+    pass
+
+try:
     import paddle
     paddle_libs_dir = os.path.join(os.path.dirname(paddle.__file__), 'libs')
     if os.path.exists(paddle_libs_dir):
@@ -41,7 +59,7 @@ try:
 except Exception:
     pass
 
-# 3. Thu thập toàn bộ submodules của ONNX Runtime, RapidOCR, PaddleOCR, VietOCR, PyTorch
+# 3. Thu thập toàn bộ submodules của ONNX Runtime, RapidOCR, PaddleOCR, VietOCR, PyTorch, Torchvision
 hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
@@ -70,6 +88,7 @@ try:
     hiddenimports += collect_submodules('vietocr')
     hiddenimports += collect_submodules('paddleocr')
     hiddenimports += collect_submodules('paddlex')
+    hiddenimports += collect_submodules('torchvision')
 except Exception:
     pass
 

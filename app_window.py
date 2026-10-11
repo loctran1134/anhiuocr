@@ -2,6 +2,10 @@ import os
 import sys
 import re
 import json
+import webbrowser
+import zipfile
+import tempfile
+import subprocess
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -30,13 +34,24 @@ for c in candidates:
             os.environ["PADDLE_PDX_CACHE_HOME"] = m_dir
             break
 
-# Windows DLL directory fix for PyTorch / Paddle
+# Windows DLL directory fix for PyTorch / Torchvision / Paddle
 try:
     import torch
     torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
     if os.path.exists(torch_lib):
         try:
             os.add_dll_directory(torch_lib)
+        except Exception:
+            pass
+except Exception:
+    pass
+
+try:
+    import torchvision
+    tv_dir = os.path.dirname(torchvision.__file__)
+    if os.path.exists(tv_dir):
+        try:
+            os.add_dll_directory(tv_dir)
         except Exception:
             pass
 except Exception:
@@ -245,22 +260,22 @@ class ThumbnailCard(QFrame):
     def __init__(self, file_path: str, parent=None):
         super().__init__(parent)
         self.file_path = file_path
-        self.setFixedSize(72, 72)
+        self.setFixedSize(60, 60)
         self.setStyleSheet("""
             ThumbnailCard {
                 background-color: #f1f5f9;
                 border: 1px solid #cbd5e1;
-                border-radius: 8px;
+                border-radius: 6px;
             }
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setContentsMargins(2, 2, 2, 2)
 
         self.img_label = QLabel()
         self.img_label.setAlignment(Qt.AlignCenter)
         self.img_label.setStyleSheet("border: none; background: transparent;")
-        pix = safe_load_pixmap(file_path, 64, 64)
+        pix = safe_load_pixmap(file_path, 54, 54)
         if not pix.isNull():
             self.img_label.setPixmap(pix)
         else:
@@ -268,17 +283,17 @@ class ThumbnailCard(QFrame):
         layout.addWidget(self.img_label)
 
         self.close_btn = QPushButton("×", self)
-        self.close_btn.setFixedSize(18, 18)
-        self.close_btn.move(52, 2)
+        self.close_btn.setFixedSize(16, 16)
+        self.close_btn.move(42, 2)
         self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.setStyleSheet("""
             QPushButton {
                 background-color: rgba(15, 23, 42, 0.75);
                 color: #ffffff;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: bold;
                 border: none;
-                border-radius: 9px;
+                border-radius: 8px;
                 padding-bottom: 2px;
             }
             QPushButton:hover {
@@ -286,6 +301,144 @@ class ThumbnailCard(QFrame):
             }
         """)
         self.close_btn.clicked.connect(lambda: self.delete_clicked.emit(self.file_path))
+
+
+# ----------------- BROWSER & EXTENSION HELPER -----------------
+def launch_browser_with_extension(url: str, ext_paths: list):
+    chrome_candidates = [
+        r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+        os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe')
+    ]
+    chrome_exe = None
+    for c in chrome_candidates:
+        if os.path.exists(c):
+            chrome_exe = c
+            break
+
+    valid_exts = [os.path.abspath(p) for p in ext_paths if os.path.exists(p)]
+
+    if chrome_exe and valid_exts:
+        try:
+            ext_arg = ",".join(valid_exts)
+            subprocess.Popen([chrome_exe, f"--load-extension={ext_arg}", url])
+            return True
+        except Exception:
+            pass
+
+    webbrowser.open(url)
+    return False
+
+
+# ----------------- ZALO IMPORT DIALOG -----------------
+class ZaloImportDialog(QDialog):
+    packs_imported = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Lấy ảnh từ Zalo Web")
+        self.setFixedSize(460, 220)
+        self.setStyleSheet("""
+            QDialog { background-color: #f8fafc; }
+            QLabel, QPushButton {
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        lbl_title = QLabel("Lấy ảnh Zalo chia theo Pack")
+        lbl_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
+        layout.addWidget(lbl_title)
+
+        lbl_desc = QLabel("Mở Zalo Web kèm tiện ích gom Pack hoặc nạp file ZIP đã tải về:")
+        lbl_desc.setStyleSheet("font-size: 11.5px; color: #64748b;")
+        layout.addWidget(lbl_desc)
+
+        btn_open_zalo = QPushButton("Mở Zalo Web (Kèm Extension gom Pack)")
+        btn_open_zalo.setCursor(Qt.PointingHandCursor)
+        btn_open_zalo.setFixedHeight(36)
+        btn_open_zalo.setStyleSheet("""
+            QPushButton {
+                background-color: #0068ff; color: #ffffff;
+                font-size: 12.5px; font-weight: 700;
+                border: none; border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #0052cc; }
+        """)
+        btn_open_zalo.clicked.connect(self.open_zalo_web)
+        layout.addWidget(btn_open_zalo)
+
+        btn_load_zip = QPushButton("Nạp file ZIP Pack ảnh từ máy...")
+        btn_load_zip.setCursor(Qt.PointingHandCursor)
+        btn_load_zip.setFixedHeight(36)
+        btn_load_zip.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff; color: #334155;
+                font-size: 12px; font-weight: 600;
+                border: 1px solid #cbd5e1; border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #f1f5f9; border-color: #94a3b8; }
+        """)
+        btn_load_zip.clicked.connect(self.load_zalo_zip)
+        layout.addWidget(btn_load_zip)
+
+        layout.addStretch()
+
+        footer = QHBoxLayout()
+        footer.addStretch()
+        btn_close = QPushButton("Đóng")
+        btn_close.setFixedHeight(28)
+        btn_close.setFixedWidth(65)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background: #f1f5f9; color: #475569;
+                border: 1px solid #cbd5e1; border-radius: 5px; font-size: 11.5px;
+            }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
+        btn_close.clicked.connect(self.reject)
+        footer.addWidget(btn_close)
+        layout.addLayout(footer)
+
+    def open_zalo_web(self):
+        ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extensions", "zalo_pack_collector")
+        launch_browser_with_extension("https://chat.zalo.me", [ext_path])
+        QMessageBox.information(
+            self,
+            "Đã mở Zalo Web",
+            "Trình duyệt đã mở Zalo Web kèm tiện ích Zalo Pack Collector.\n\n"
+            "Hãy bấm biểu tượng tiện ích trên thanh trình duyệt để quét ảnh theo nhân viên & ngày, "
+            "sau đó tải file ZIP về và nạp vào phần mềm."
+        )
+
+    def load_zalo_zip(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file ZIP ảnh Zalo", "", "ZIP Files (*.zip *.rar)"
+        )
+        if not file_path:
+            return
+
+        try:
+            extract_dir = os.path.join(tempfile.gettempdir(), f"zalo_packs_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            os.makedirs(extract_dir, exist_ok=True)
+            img_paths = []
+            with zipfile.ZipFile(file_path, 'r') as zf:
+                zf.extractall(extract_dir)
+                for root, _, files in os.walk(extract_dir):
+                    for fn in files:
+                        if fn.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+                            img_paths.append(os.path.join(root, fn))
+
+            if img_paths:
+                self.packs_imported.emit(img_paths)
+                self.accept()
+            else:
+                QMessageBox.warning(self, "Không tìm thấy ảnh", "File ZIP không chứa hình ảnh hợp lệ!")
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi nạp ZIP", f"Không thể đọc file ZIP: {str(e)}")
 
 
 # ----------------- DROPZONE WIDGET -----------------
@@ -296,47 +449,38 @@ class DropZoneWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setMinimumHeight(140)
+        self.setFixedHeight(36)
         self.setObjectName("DropZone")
         self.setStyleSheet("""
             QFrame#DropZone {
                 background-color: #f8fafc;
-                border: 2px dashed #cbd5e1;
-                border-radius: 10px;
+                border: 1.5px dashed #cbd5e1;
+                border-radius: 6px;
             }
             QFrame#DropZone:hover {
-                background-color: #f1f5f9;
+                background-color: #eff6ff;
                 border-color: #3b82f6;
             }
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignCenter)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 2, 6, 2)
+        layout.setSpacing(8)
 
-        self.icon_label = QLabel()
-        self.icon_label.setAlignment(Qt.AlignCenter)
-        self.icon_label.setStyleSheet("border: none; background: transparent;")
-        self.icon_label.setPixmap(get_svg_pixmap(SVG_CLOUD_UPLOAD, "#94a3b8", 36, 36))
-        layout.addWidget(self.icon_label)
+        self.prompt_label = QLabel("Kéo thả ảnh vào đây")
+        self.prompt_label.setStyleSheet("color: #64748b; font-size: 11.5px; font-weight: 600; border: none; background: transparent;")
+        layout.addWidget(self.prompt_label, stretch=1)
 
-        self.prompt_label = QLabel("Kéo ảnh vào đây hoặc")
-        self.prompt_label.setAlignment(Qt.AlignCenter)
-        self.prompt_label.setStyleSheet("color: #475569; font-size: 13px; font-weight: 500; border: none; background: transparent;")
-        layout.addWidget(self.prompt_label)
-
-        self.btn_browse = QPushButton("  Chọn ảnh")
-        self.btn_browse.setIcon(get_svg_icon(SVG_IMAGE, "#2563eb", 16))
+        self.btn_browse = QPushButton("Chọn ảnh...")
         self.btn_browse.setCursor(Qt.PointingHandCursor)
         self.btn_browse.setStyleSheet("""
             QPushButton {
                 background-color: #ffffff;
                 color: #2563eb;
                 border: 1px solid #bfdbfe;
-                border-radius: 6px;
-                padding: 6px 16px;
-                font-size: 13px;
+                border-radius: 4px;
+                padding: 3px 10px;
+                font-size: 11.5px;
                 font-weight: 600;
             }
             QPushButton:hover {
@@ -345,12 +489,7 @@ class DropZoneWidget(QFrame):
             }
         """)
         self.btn_browse.clicked.connect(self.browse_clicked.emit)
-        layout.addWidget(self.btn_browse, alignment=Qt.AlignCenter)
-
-        self.hint_label = QLabel("Hỗ trợ JPG, PNG. Tối đa 100 ảnh.")
-        self.hint_label.setAlignment(Qt.AlignCenter)
-        self.hint_label.setStyleSheet("color: #94a3b8; font-size: 11px; border: none; background: transparent;")
-        layout.addWidget(self.hint_label)
+        layout.addWidget(self.btn_browse)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -440,7 +579,7 @@ class ImageViewerDialog(QDialog):
         top_bar.addStretch()
 
         # Nút chuyển đổi chế độ xem: ROI Tracking Xanh Lá vs Ảnh Gốc
-        self.btn_toggle_mode = QPushButton("● Đang xem: Vùng ROI & Track chữ")
+        self.btn_toggle_mode = QPushButton("Đang xem: Vùng ROI & Track chữ")
         self.btn_toggle_mode.setCursor(Qt.PointingHandCursor)
         self.btn_toggle_mode.setStyleSheet("""
             QPushButton {
@@ -544,7 +683,7 @@ class ImageViewerDialog(QDialog):
             pix = cv2_to_qpixmap(self.annotated_img, 1800, 1300)
             if not pix.isNull():
                 self.img_label.setPixmap(pix)
-                self.btn_toggle_mode.setText("● Đang xem: Vùng ROI & Track chữ")
+                self.btn_toggle_mode.setText("Đang xem: Vùng ROI & Track chữ")
                 self.btn_toggle_mode.setStyleSheet("""
                     QPushButton {
                         background-color: #064e3b;
@@ -568,7 +707,7 @@ class ImageViewerDialog(QDialog):
         else:
             self.img_label.setText("Không thể tải hình ảnh này")
             self.img_label.setStyleSheet("color: #94a3b8; font-size: 14px; border: none;")
-        self.btn_toggle_mode.setText("○ Đang xem: Ảnh gốc")
+        self.btn_toggle_mode.setText("Đang xem: Ảnh gốc")
         self.btn_toggle_mode.setStyleSheet("""
             QPushButton {
                 background-color: #1e293b;
@@ -637,11 +776,8 @@ class StoreDetailDialog(QDialog):
             warn_card = QFrame()
             warn_card.setStyleSheet("background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;")
             wc_l = QHBoxLayout(warn_card)
-            wc_l.setContentsMargins(12, 10, 12, 10)
-            wc_l.setSpacing(10)
-            w_icon = QLabel()
-            w_icon.setPixmap(get_svg_pixmap(SVG_ALERT_TRIANGLE, "#d97706", 18, 18))
-            wc_l.addWidget(w_icon)
+            wc_l.setContentsMargins(12, 8, 12, 8)
+            wc_l.setSpacing(8)
             w_txt = QLabel(f"Cảnh báo trùng lặp: Điểm bán này có {cnt} ảnh ({dup_cnt} ảnh chụp trùng). Hệ thống tính 1 ảnh hợp lệ.")
             w_txt.setStyleSheet("color: #92400e; font-weight: 600; font-size: 12.5px; border: none; background: transparent;")
             wc_l.addWidget(w_txt)
@@ -933,19 +1069,12 @@ class GeminiAssistantDialog(QDialog):
 
         # Header
         hdr = QHBoxLayout()
-        hdr_icon = QLabel()
-        hdr_icon.setFixedSize(38, 38)
-        hdr_icon.setStyleSheet("background-color: #4f46e5; border-radius: 9px;")
-        hdr_icon.setAlignment(Qt.AlignCenter)
-        hdr_icon.setPixmap(get_svg_pixmap(SVG_SPARKLE, "#ffffff", 22, 22))
-        hdr.addWidget(hdr_icon)
-
         hdr_v = QVBoxLayout()
         hdr_v.setSpacing(2)
         hdr_t = QLabel("Trợ lý AI Gemini: Làm sạch JSON & Chấm điểm")
-        hdr_t.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        hdr_sub = QLabel("Xuất JSON tên SR, Địa chỉ, Tọa độ, Thời gian để Gemini chuẩn hóa, sau đó nạp lại để chấm điểm chuẩn xác 100%.")
-        hdr_sub.setStyleSheet("font-size: 12px; color: #64748b;")
+        hdr_t.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        hdr_sub = QLabel("Xuất JSON tên SR, Địa chỉ, Tọa độ, Thời gian để Gemini chuẩn hóa, sau đó nạp lại để chấm điểm chuẩn xác.")
+        hdr_sub.setStyleSheet("font-size: 11.5px; color: #64748b;")
         hdr_v.addWidget(hdr_t)
         hdr_v.addWidget(hdr_sub)
         hdr.addLayout(hdr_v)
@@ -1015,7 +1144,7 @@ class GeminiAssistantDialog(QDialog):
         te_btns = QHBoxLayout()
         te_btns.setSpacing(10)
 
-        self.btn_copy_prompt = QPushButton("📋  Sao chép Prompt + JSON cho Gemini")
+        self.btn_copy_prompt = QPushButton("Sao chép Prompt + JSON cho Gemini")
         self.btn_copy_prompt.setCursor(Qt.PointingHandCursor)
         self.btn_copy_prompt.setFixedHeight(38)
         self.btn_copy_prompt.setStyleSheet("""
@@ -1033,7 +1162,7 @@ class GeminiAssistantDialog(QDialog):
         self.btn_copy_prompt.clicked.connect(self.copy_prompt_to_clipboard)
         te_btns.addWidget(self.btn_copy_prompt)
 
-        self.btn_save_json = QPushButton("💾  Lưu file JSON ra máy...")
+        self.btn_save_json = QPushButton("Lưu file JSON ra máy...")
         self.btn_save_json.setCursor(Qt.PointingHandCursor)
         self.btn_save_json.setFixedHeight(38)
         self.btn_save_json.setStyleSheet("""
@@ -1058,7 +1187,7 @@ class GeminiAssistantDialog(QDialog):
         te_btns.addWidget(self.lbl_copy_notice)
 
         te_l.addLayout(te_btns)
-        self.tabs.addTab(tab_export, "1. 📤 Xuất JSON & Lấy Prompt")
+        self.tabs.addTab(tab_export, "1. Xuất JSON & Prompt")
 
         # --- TAB 2: Nạp JSON đã làm sạch & Chấm điểm ---
         tab_import = QWidget()
@@ -1073,7 +1202,7 @@ class GeminiAssistantDialog(QDialog):
         ti_action_bar = QHBoxLayout()
         ti_action_bar.setSpacing(8)
 
-        btn_open_file = QPushButton("📂  Chọn file JSON đã làm sạch...")
+        btn_open_file = QPushButton("Chọn file JSON đã làm sạch...")
         btn_open_file.setCursor(Qt.PointingHandCursor)
         btn_open_file.setFixedHeight(34)
         btn_open_file.setStyleSheet("""
@@ -1087,7 +1216,7 @@ class GeminiAssistantDialog(QDialog):
         btn_open_file.clicked.connect(self.load_cleaned_json_file)
         ti_action_bar.addWidget(btn_open_file)
 
-        btn_paste = QPushButton("📋  Dán từ Clipboard")
+        btn_paste = QPushButton("Dán từ Clipboard")
         btn_paste.setCursor(Qt.PointingHandCursor)
         btn_paste.setFixedHeight(34)
         btn_paste.setStyleSheet("""
@@ -1135,14 +1264,14 @@ class GeminiAssistantDialog(QDialog):
         ti_l.addWidget(self.txt_import)
 
         # Nút to chấm điểm bán
-        self.btn_evaluate = QPushButton("✨  BẮT ĐẦU CHẤM CỬA HÀNG TỪ DỮ LIỆU GEMINI  ✨")
+        self.btn_evaluate = QPushButton("Bắt đầu chấm điểm từ dữ liệu Gemini")
         self.btn_evaluate.setCursor(Qt.PointingHandCursor)
-        self.btn_evaluate.setFixedHeight(44)
+        self.btn_evaluate.setFixedHeight(40)
         self.btn_evaluate.setStyleSheet("""
             QPushButton {
                 background-color: #16a34a;
                 color: #ffffff;
-                font-size: 14px;
+                font-size: 13.5px;
                 font-weight: 800;
                 border: none;
                 border-radius: 8px;
@@ -1156,7 +1285,7 @@ class GeminiAssistantDialog(QDialog):
         self.btn_evaluate.clicked.connect(self.process_cleaned_json_and_evaluate)
         ti_l.addWidget(self.btn_evaluate)
 
-        self.tabs.addTab(tab_import, "2. 📥 Nạp JSON đã làm sạch & Chấm điểm bán")
+        self.tabs.addTab(tab_import, "2. Nạp JSON & Chấm điểm bán")
         layout.addWidget(self.tabs)
 
         if initial_tab in (0, 1):
@@ -1184,7 +1313,7 @@ class GeminiAssistantDialog(QDialog):
         engine = get_ocr_engine()
         prompt = engine.get_gemini_cleaning_prompt(self.raw_records)
         QApplication.clipboard().setText(prompt)
-        self.lbl_copy_notice.setText("✅ Đã sao chép Prompt + JSON! Hãy dán (Ctrl+V) vào Gemini.")
+        self.lbl_copy_notice.setText("Đã sao chép Prompt + JSON! Hãy dán (Ctrl+V) vào Gemini.")
 
     def save_json_file(self):
         default_name = f"diem_ban_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1285,8 +1414,8 @@ class MainWindow(QMainWindow):
         outer_scroll.setWidget(central)
 
         main_vbox = QVBoxLayout(central)
-        main_vbox.setContentsMargins(28, 22, 28, 28)
-        main_vbox.setSpacing(16)
+        main_vbox.setContentsMargins(18, 14, 18, 16)
+        main_vbox.setSpacing(10)
 
         self.setStyleSheet("""
             QMainWindow {
@@ -1300,102 +1429,167 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # ----------------- 1. HEADER -----------------
+        # ----------------- 1. HEADER ROW -----------------
         header_layout = QHBoxLayout()
         header_layout.setSpacing(12)
 
-        icon_box = QLabel()
-        icon_box.setFixedSize(42, 42)
-        icon_box.setStyleSheet("background-color: #2563eb; border-radius: 10px; border: none;")
-        icon_box.setAlignment(Qt.AlignCenter)
-        icon_box.setPixmap(get_svg_pixmap(SVG_CAMERA, "#ffffff", 24, 24))
-        header_layout.addWidget(icon_box)
+        app_title = QLabel("Anhiu OCR")
+        app_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        header_layout.addWidget(app_title)
 
-        title_vbox = QVBoxLayout()
-        title_vbox.setSpacing(1)
+        # Mini KPI summary pills
+        self.pill_total = QLabel("Tổng: 0")
+        self.pill_total.setStyleSheet("background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1;")
+        self.pill_valid = QLabel("Hợp lệ: 0")
+        self.pill_valid.setStyleSheet("background: #ecfdf5; color: #047857; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #a7f3d0;")
+        self.pill_warn = QLabel("Trùng/Lỗi: 0")
+        self.pill_warn.setStyleSheet("background: #fffbeb; color: #b45309; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #fde68a;")
 
-        app_title = QLabel("Anhiu")
-        app_title.setStyleSheet("font-size: 20px; font-weight: 800; color: #0f172a; border: none;")
-        title_vbox.addWidget(app_title)
-
-        app_sub = QLabel("Nhận diện điểm bán từ hình ảnh bằng AI")
-        app_sub.setStyleSheet("font-size: 12px; color: #64748b; font-weight: 400; border: none;")
-        title_vbox.addWidget(app_sub)
-        header_layout.addLayout(title_vbox)
+        kpi_pills = QHBoxLayout()
+        kpi_pills.setSpacing(6)
+        kpi_pills.addWidget(self.pill_total)
+        kpi_pills.addWidget(self.pill_valid)
+        kpi_pills.addWidget(self.pill_warn)
+        header_layout.addLayout(kpi_pills)
 
         header_layout.addStretch()
 
-        badge = QLabel("TIMEMARK OCR")
-        badge.setStyleSheet("""
-            background-color: #eff6ff;
-            color: #2563eb;
-            border: 1px solid #bfdbfe;
-            border-radius: 14px;
-            padding: 4px 14px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        """)
-        header_layout.addWidget(badge)
+        self.lbl_selected_count = QLabel("0 ảnh đã chọn")
+        self.lbl_selected_count.setStyleSheet("font-size: 11.5px; font-weight: 600; color: #64748b;")
+        header_layout.addWidget(self.lbl_selected_count)
+
         main_vbox.addLayout(header_layout)
 
-        # ----------------- 2. TOP SECTION (2 CARDS) -----------------
-        top_cards_layout = QHBoxLayout()
-        top_cards_layout.setSpacing(18)
-
-        # --- LEFT CARD: HÌNH ẢNH (~60%) ---
-        left_card = QFrame()
-        left_card.setObjectName("LeftCard")
-        left_card.setStyleSheet("""
-            QFrame#LeftCard {
+        # ----------------- 2. COMPACT TOOLBAR (Single Clean Row) -----------------
+        toolbar_card = QFrame()
+        toolbar_card.setStyleSheet("""
+            QFrame {
                 background-color: #ffffff;
                 border: 1px solid #e2e8f0;
-                border-radius: 12px;
+                border-radius: 8px;
             }
         """)
-        left_layout = QVBoxLayout(left_card)
-        left_layout.setContentsMargins(20, 18, 20, 18)
-        left_layout.setSpacing(12)
-
-        card_title = QLabel("Hình ảnh")
-        card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a; border: none;")
-        left_layout.addWidget(card_title)
+        tb_layout = QHBoxLayout(toolbar_card)
+        tb_layout.setContentsMargins(8, 6, 8, 6)
+        tb_layout.setSpacing(8)
 
         self.dropzone = DropZoneWidget()
         self.dropzone.files_dropped.connect(self.add_files)
         self.dropzone.browse_clicked.connect(self.browse_files)
-        left_layout.addWidget(self.dropzone)
+        tb_layout.addWidget(self.dropzone, 3)
 
-        self.status_bar_layout = QHBoxLayout()
-        self.lbl_selected_count = QLabel("Đã chọn 0 ảnh")
-        self.lbl_selected_count.setStyleSheet("font-size: 13px; font-weight: 600; color: #334155; border: none;")
-        self.status_bar_layout.addWidget(self.lbl_selected_count)
+        self.btn_zalo = QPushButton("Lấy ảnh từ Zalo")
+        self.btn_zalo.setCursor(Qt.PointingHandCursor)
+        self.btn_zalo.setFixedHeight(34)
+        self.btn_zalo.setStyleSheet("""
+            QPushButton {
+                background-color: #eff6ff;
+                color: #0068ff;
+                border: 1px solid #bfdbfe;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 12px;
+            }
+            QPushButton:hover { background-color: #dbeafe; }
+        """)
+        self.btn_zalo.clicked.connect(self.open_zalo_dialog)
+        tb_layout.addWidget(self.btn_zalo)
 
-        self.status_bar_layout.addStretch()
+        self.btn_start = QPushButton("Bắt đầu nhận diện")
+        self.btn_start.setCursor(Qt.PointingHandCursor)
+        self.btn_start.setFixedHeight(34)
+        self.btn_start.setStyleSheet("""
+            QPushButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 16px;
+            }
+            QPushButton:hover { background-color: #1d4ed8; }
+            QPushButton:disabled { background-color: #94a3b8; }
+        """)
+        self.btn_start.clicked.connect(self.start_ocr_process)
+        tb_layout.addWidget(self.btn_start)
 
-        self.btn_clear_all = QPushButton("  Xóa tất cả")
-        self.btn_clear_all.setIcon(get_svg_icon(SVG_TRASH, "#ef4444", 14))
+        self.btn_open_gemini = QPushButton("Chấm điểm Gemini")
+        self.btn_open_gemini.setCursor(Qt.PointingHandCursor)
+        self.btn_open_gemini.setFixedHeight(34)
+        self.btn_open_gemini.setStyleSheet("""
+            QPushButton {
+                background-color: #f5f3ff;
+                color: #4f46e5;
+                border: 1px solid #c7d2fe;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 12px;
+            }
+            QPushButton:hover { background-color: #ede9fe; border-color: #818cf8; }
+            QPushButton:disabled { color: #94a3b8; border-color: #e2e8f0; background-color: #f8fafc; }
+        """)
+        self.btn_open_gemini.clicked.connect(self.open_web_gemini_evaluator)
+        self.btn_open_gemini.setEnabled(False)
+        tb_layout.addWidget(self.btn_open_gemini)
+
+        self.btn_export = QPushButton("Xuất Excel")
+        self.btn_export.setCursor(Qt.PointingHandCursor)
+        self.btn_export.setFixedHeight(34)
+        self.btn_export.setStyleSheet("""
+            QPushButton {
+                background-color: #f0fdf4;
+                color: #16a34a;
+                border: 1px solid #bbf7d0;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 12px;
+            }
+            QPushButton:hover { background-color: #dcfce7; }
+            QPushButton:disabled { color: #94a3b8; border-color: #e2e8f0; background-color: #f8fafc; }
+        """)
+        self.btn_export.clicked.connect(self.export_to_excel)
+        self.btn_export.setEnabled(False)
+        tb_layout.addWidget(self.btn_export)
+
+        tb_layout.addStretch()
+
+        self.btn_clear_all = QPushButton("Xóa tất cả")
         self.btn_clear_all.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_all.setFixedHeight(34)
         self.btn_clear_all.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 color: #ef4444;
-                font-size: 12px;
-                font-weight: 600;
                 border: none;
+                font-size: 11.5px;
+                font-weight: 600;
+                padding: 0 6px;
             }
-            QPushButton:hover {
-                color: #dc2626;
-                text-decoration: underline;
-            }
+            QPushButton:hover { text-decoration: underline; color: #dc2626; }
         """)
         self.btn_clear_all.clicked.connect(self.clear_all_files)
-        self.status_bar_layout.addWidget(self.btn_clear_all)
-        left_layout.addLayout(self.status_bar_layout)
+        tb_layout.addWidget(self.btn_clear_all)
+
+        main_vbox.addWidget(toolbar_card)
+
+        # Progress bar mỏng 3px
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(3)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background-color: #e2e8f0; border: none; }
+            QProgressBar::chunk { background-color: #2563eb; }
+        """)
+        self.progress_bar.setVisible(False)
+        main_vbox.addWidget(self.progress_bar)
 
         # Thumbnails strip
         self.thumb_scroll = QScrollArea()
-        self.thumb_scroll.setFixedHeight(88)
+        self.thumb_scroll.setFixedHeight(54)
         self.thumb_scroll.setWidgetResizable(True)
         self.thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1404,455 +1598,23 @@ class MainWindow(QMainWindow):
         self.thumb_container.setStyleSheet("background-color: transparent;")
         self.thumb_layout = QHBoxLayout(self.thumb_container)
         self.thumb_layout.setContentsMargins(0, 0, 0, 0)
-        self.thumb_layout.setSpacing(8)
+        self.thumb_layout.setSpacing(6)
         self.thumb_layout.addStretch()
         self.thumb_scroll.setWidget(self.thumb_container)
-        left_layout.addWidget(self.thumb_scroll)
+        self.thumb_scroll.setVisible(False)
+        main_vbox.addWidget(self.thumb_scroll)
 
-        action_layout = QHBoxLayout()
-        action_layout.addStretch()
-
-        self.btn_start = QPushButton("Bắt đầu nhận diện  →")
-        self.btn_start.setCursor(Qt.PointingHandCursor)
-        self.btn_start.setStyleSheet("""
-            QPushButton {
-                background-color: #2563eb;
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: 700;
-                border: none;
-                border-radius: 8px;
-                padding: 10px 24px;
-            }
-            QPushButton:hover {
-                background-color: #1d4ed8;
-            }
-            QPushButton:disabled {
-                background-color: #94a3b8;
-            }
-        """)
-        self.btn_start.clicked.connect(self.start_ocr_process)
-        action_layout.addWidget(self.btn_start)
-
-        self.btn_gemini = QPushButton("✨ Làm sạch bằng Gemini")
-        self.btn_gemini.setCursor(Qt.PointingHandCursor)
-        self.btn_gemini.setStyleSheet("""
-            QPushButton {
-                background-color: #f5f3ff;
-                color: #4f46e5;
-                font-size: 13.5px;
-                font-weight: 700;
-                border: 1.5px solid #c7d2fe;
-                border-radius: 8px;
-                padding: 10px 18px;
-            }
-            QPushButton:hover {
-                background-color: #ede9fe;
-                border-color: #818cf8;
-            }
-        """)
-        self.btn_gemini.setToolTip("Xuất JSON cho Gemini làm sạch dữ liệu hoặc nạp kết quả đã làm sạch để chấm điểm bán")
-        self.btn_gemini.clicked.connect(self.open_gemini_dialog)
-        action_layout.addWidget(self.btn_gemini)
-
-        left_layout.addLayout(action_layout)
-
-        top_cards_layout.addWidget(left_card, 5)
-
-        # --- RIGHT CARD: PHÂN TÍCH & BÁO CÁO KẾT QUẢ TRỰC TIẾP ---
-        self.right_card = QFrame()
-        self.right_card.setObjectName("RightCard")
-        self.right_card.setStyleSheet("""
-            QFrame#RightCard {
-                background-color: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-            }
-        """)
-        self.right_main_layout = QVBoxLayout(self.right_card)
-        self.right_main_layout.setContentsMargins(18, 16, 18, 16)
-        self.right_main_layout.setSpacing(10)
-
-        # Thanh chuyển đổi chế độ xem & Header thao tác tích hợp 1 dòng
-        self.right_tab_bar = QHBoxLayout()
-        self.right_tab_bar.setSpacing(8)
-
-        self.btn_tab_preview = QPushButton("◉ Xem trực quan OCR")
-        self.btn_tab_report = QPushButton("≡ Báo cáo kết quả")
-
-        _tab_active_style = """
-            QPushButton {
-                background-color: #064e3b; color: #a7f3d0;
-                font-size: 12px; font-weight: 700;
-                border: 1px solid #059669; border-radius: 6px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover { background-color: #047857; color: #ffffff; }
-        """
-        _tab_inactive_style = """
-            QPushButton {
-                background-color: #f1f5f9; color: #475569;
-                font-size: 12px; font-weight: 600;
-                border: 1px solid #cbd5e1; border-radius: 6px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover { background-color: #e2e8f0; }
-        """
-        self.btn_tab_preview.setStyleSheet(_tab_active_style)
-        self.btn_tab_report.setStyleSheet(_tab_inactive_style)
-
-        for b in [self.btn_tab_preview, self.btn_tab_report]:
-            b.setCursor(Qt.PointingHandCursor)
-            b.setFixedHeight(30)
-
-        self.btn_tab_preview.clicked.connect(lambda: self.switch_right_tab("preview"))
-        self.btn_tab_report.clicked.connect(lambda: self.switch_right_tab("report"))
-
-        self.right_tab_bar.addWidget(self.btn_tab_preview)
-        self.right_tab_bar.addWidget(self.btn_tab_report)
-
-        # Cụm trạng thái tích hợp ngay trên thanh Header
-        self.right_tab_bar.addSpacing(6)
-        self.status_badge = QLabel("SẴN SÀNG")
-        self.status_badge.setStyleSheet("""
-            background-color: #f1f5f9; color: #475569;
-            font-size: 11px; font-weight: 700;
-            padding: 3px 8px; border-radius: 6px;
-            border: 1px solid #cbd5e1;
-        """)
-        self.right_tab_bar.addWidget(self.status_badge)
-
-        self.status_title = QLabel("Quá trình OCR trực quan")
-        self.status_title.setStyleSheet("font-size: 12.5px; font-weight: 700; color: #0f172a; border: none;")
-        self.right_tab_bar.addWidget(self.status_title)
-        self.right_tab_bar.addStretch()
-
-        # Cụm điều hướng & công cụ xem ảnh bên phải Header
-        self.btn_toggle_zoom = QPushButton("🔍 Soi chữ Timemark")
-        self.btn_toggle_zoom.setCursor(Qt.PointingHandCursor)
-        self.btn_toggle_zoom.setFixedHeight(28)
-        self.btn_toggle_zoom.setStyleSheet("""
-            QPushButton {
-                background-color: #f8fafc; color: #0f172a;
-                border: 1px solid #cbd5e1; border-radius: 5px;
-                font-size: 11.5px; font-weight: 600; padding: 0 10px;
-            }
-            QPushButton:hover { background-color: #e2e8f0; }
-        """)
-        self.btn_toggle_zoom.setToolTip("Phóng to cận cảnh 38% góc đáy ảnh để nhìn rõ từng nét chữ Timemark (Click ảnh để bật/tắt)")
-        self.btn_toggle_zoom.clicked.connect(self.toggle_roi_zoom)
-        self.right_tab_bar.addWidget(self.btn_toggle_zoom)
-
-        self.btn_prev_img = QPushButton("‹")
-        self.btn_prev_img.setCursor(Qt.PointingHandCursor)
-        self.btn_prev_img.setFixedSize(26, 28)
-        self.btn_next_img = QPushButton("›")
-        self.btn_next_img.setCursor(Qt.PointingHandCursor)
-        self.btn_next_img.setFixedSize(26, 28)
-        for nb in [self.btn_prev_img, self.btn_next_img]:
-            nb.setStyleSheet("""
-                QPushButton {
-                    background-color: #f8fafc; color: #334155;
-                    border: 1px solid #cbd5e1; border-radius: 5px;
-                    font-size: 13px; font-weight: 700;
-                }
-                QPushButton:hover { background-color: #e2e8f0; }
-                QPushButton:disabled { color: #94a3b8; background-color: #f1f5f9; }
-            """)
-        self.lbl_preview_idx = QLabel("0/0")
-        self.lbl_preview_idx.setStyleSheet("font-size: 11.5px; font-weight: 700; color: #64748b; padding: 0 2px;")
-        self.right_tab_bar.addWidget(self.btn_prev_img)
-        self.right_tab_bar.addWidget(self.lbl_preview_idx)
-        self.right_tab_bar.addWidget(self.btn_next_img)
-        self.btn_prev_img.clicked.connect(self.show_prev_preview)
-        self.btn_next_img.clicked.connect(self.show_next_preview)
-
-        self.btn_fullscreen_view = QPushButton("⛶")
-        self.btn_fullscreen_view.setCursor(Qt.PointingHandCursor)
-        self.btn_fullscreen_view.setFixedSize(28, 28)
-        self.btn_fullscreen_view.setStyleSheet("""
-            QPushButton {
-                background-color: #eff6ff; color: #2563eb;
-                border: 1px solid #bfdbfe; border-radius: 5px;
-                font-size: 13px; font-weight: 700;
-            }
-            QPushButton:hover { background-color: #2563eb; color: #ffffff; }
-        """)
-        self.btn_fullscreen_view.setToolTip("Mở toàn màn hình xem ảnh gốc độ nét cao")
-        self.btn_fullscreen_view.clicked.connect(self.open_current_fullscreen_preview)
-        self.right_tab_bar.addWidget(self.btn_fullscreen_view)
-
-        self.right_main_layout.addLayout(self.right_tab_bar)
-
-        # 1. VIEW CHỜ & TIẾN TRÌNH QUÉT OCR TRỰC QUAN
-        self.view_waiting = QWidget()
-        vw_l = QVBoxLayout(self.view_waiting)
-        vw_l.setContentsMargins(0, 0, 0, 0)
-        vw_l.setSpacing(6)
-
-        # Progress bar siêu mảnh (chỉ hiện khi đang xử lý OCR)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(4)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #e2e8f0;
-                border: none;
-                border-radius: 2px;
-            }
-            QProgressBar::chunk {
-                background-color: #16a34a;
-                border-radius: 2px;
-            }
-        """)
-        self.progress_bar.setVisible(False)
-        vw_l.addWidget(self.progress_bar)
-
-        # Giữ widget status_desc ẩn để tương thích ngược với luồng worker
+        # Dummies for backward safety
+        self.status_title = QLabel()
         self.status_desc = QLabel()
-        self.status_desc.setVisible(False)
-
-        # Khung căn giữa để tự động ôm sát tỉ lệ ảnh (9:16 hoặc 16:9), triệt tiêu hoàn toàn viền thừa 2 bên
-        self.preview_align_layout = QHBoxLayout()
-        self.preview_align_layout.setContentsMargins(0, 0, 0, 0)
-        self.preview_align_layout.setAlignment(Qt.AlignCenter)
-
-        # Khung Preview Canvas hiển thị hình ảnh (nền slate tối sang trọng, ôm sát tỉ lệ ảnh)
-        self.preview_frame = QFrame()
-        self.preview_frame.setMinimumHeight(380)
-        self.preview_frame.setStyleSheet("""
-            QFrame {
-                background-color: #0f172a;
-                border: 1px solid #334155;
-                border-radius: 12px;
-            }
-        """)
-        pf_layout = QVBoxLayout(self.preview_frame)
-        pf_layout.setContentsMargins(4, 4, 4, 4)
-        pf_layout.setAlignment(Qt.AlignCenter)
-
-        # Hình ảnh được vẽ box xanh lá — Click để toggle Zoom cận cảnh Timemark
-        self.preview_img_label = QLabel()
-        self.preview_img_label.setAlignment(Qt.AlignCenter)
-        self.preview_img_label.setStyleSheet("border: none; background: transparent;")
-        self.preview_img_label.setVisible(False)
-        self.preview_img_label.setMinimumSize(1, 1)
-        self.preview_img_label.setCursor(Qt.PointingHandCursor)
-        self.preview_img_label.setToolTip("Click vào ảnh để bật/tắt chế độ soi cận cảnh chữ Timemark")
-        self.preview_img_label.mousePressEvent = lambda ev: self.toggle_roi_zoom()
-        pf_layout.addWidget(self.preview_img_label, stretch=1)
-
-        # Placeholder khi chưa chạy
-        self.preview_placeholder = QWidget()
-        ph_l = QVBoxLayout(self.preview_placeholder)
-        ph_l.setAlignment(Qt.AlignCenter)
-        ph_l.setSpacing(8)
-        self.illust_label = QLabel()
-        self.illust_label.setAlignment(Qt.AlignCenter)
-        self.illust_label.setPixmap(get_svg_pixmap(SVG_EMPTY_ILLUST, "#3b82f6", 75, 75))
-        self.illust_label.setStyleSheet("border: none; background: transparent;")
-        ph_l.addWidget(self.illust_label)
-        ph_txt = QLabel("Vùng hiển thị trực quan ROI & Track chữ Timemark")
-        ph_txt.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500; border: none; background: transparent;")
-        ph_l.addWidget(ph_txt, alignment=Qt.AlignCenter)
-        pf_layout.addWidget(self.preview_placeholder)
-
-        self.preview_align_layout.addWidget(self.preview_frame)
-        vw_l.addLayout(self.preview_align_layout, stretch=1)
-
-        # Khung Telemetry bóc tách thời gian thực — Tinh gọn thành 1 DÒNG DUY NHẤT
-        self.telemetry_card = QFrame()
-        self.telemetry_card.setFixedHeight(36)
-        self.telemetry_card.setStyleSheet("""
-            QFrame {
-                background-color: #f8fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 8px;
-            }
-        """)
-        tc_l = QHBoxLayout(self.telemetry_card)
-        tc_l.setContentsMargins(12, 4, 12, 4)
-        tc_l.setSpacing(10)
-
-        self.lbl_tele_addr = QLabel("📍 Địa chỉ: --")
-        self.lbl_tele_addr.setStyleSheet("font-size: 12px; font-weight: 700; color: #0f172a; border: none; background: transparent;")
-        tc_l.addWidget(self.lbl_tele_addr, stretch=1)
-
-        self.lbl_tele_time = QLabel("🕒 --")
-        self.lbl_tele_time.setStyleSheet("font-size: 11.5px; font-weight: 600; color: #475569; border: none; background: transparent;")
-        tc_l.addWidget(self.lbl_tele_time)
-
-        self.lbl_tele_gps = QLabel("🌐 --")
-        self.lbl_tele_gps.setStyleSheet("font-size: 11.5px; font-weight: 600; color: #475569; border: none; background: transparent;")
-        tc_l.addWidget(self.lbl_tele_gps)
-
-        self.lbl_tele_status = QLabel("Chờ quét")
-        self.lbl_tele_status.setStyleSheet("background-color: #f1f5f9; color: #64748b; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1;")
-        tc_l.addWidget(self.lbl_tele_status)
-
-        vw_l.addWidget(self.telemetry_card)
-        self.right_main_layout.addWidget(self.view_waiting)
-
-        # 2. VIEW BÁO CÁO TRỰC TIẾP (Hiển thị ngay khi phân tích hoàn tất!)
-        self.view_report = QWidget()
-        vr_l = QVBoxLayout(self.view_report)
-        vr_l.setContentsMargins(0, 0, 0, 0)
-        vr_l.setSpacing(12)
-
-        # Header báo cáo
-        top_rep_h = QHBoxLayout()
-        top_rep_h.setSpacing(12)
-        top_rep_h.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-
-        rep_icon = QLabel()
-        rep_icon.setFixedSize(38, 38)
-        rep_icon.setStyleSheet("background-color: #dcfce7; border-radius: 19px; border: 1px solid #bbf7d0;")
-        rep_icon.setAlignment(Qt.AlignCenter)
-        rep_icon.setPixmap(get_svg_pixmap(SVG_CHECK_CIRCLE, "#16a34a", 22, 22))
-        top_rep_h.addWidget(rep_icon)
-
-        rep_title_v = QVBoxLayout()
-        rep_title_v.setSpacing(2)
-        lbl_rep_title = QLabel("Phân tích hoàn tất!")
-        lbl_rep_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a; border: none;")
-        rep_title_v.addWidget(lbl_rep_title)
-        self.lbl_rep_desc = QLabel("AI đã nhận diện thông số & đối soát điểm bán thành công")
-        self.lbl_rep_desc.setStyleSheet("font-size: 12px; color: #64748b; border: none;")
-        rep_title_v.addWidget(self.lbl_rep_desc)
-        top_rep_h.addLayout(rep_title_v)
-        top_rep_h.addStretch()
-        vr_l.addLayout(top_rep_h)
-
-        # Khung 3 Mini KPI cards nằm ngang
-        kpi_grid = QHBoxLayout()
-        kpi_grid.setSpacing(10)
-
-        # 1. Tổng ảnh nạp
-        card_total = QFrame()
-        card_total.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;")
-        ct_l = QVBoxLayout(card_total)
-        ct_l.setContentsMargins(8, 10, 8, 10)
-        ct_l.setSpacing(2)
-        ct_l.setAlignment(Qt.AlignCenter)
+        self.status_badge = QLabel()
         self.kpi_total_imgs = QLabel("0")
-        self.kpi_total_imgs.setStyleSheet("font-size: 22px; font-weight: 800; color: #0f172a; border: none; background: transparent;")
-        self.kpi_total_imgs.setAlignment(Qt.AlignCenter)
-        ct_l.addWidget(self.kpi_total_imgs)
-        lbl_ct = QLabel("Tổng ảnh nạp")
-        lbl_ct.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b; border: none; background: transparent;")
-        lbl_ct.setAlignment(Qt.AlignCenter)
-        ct_l.addWidget(lbl_ct)
-        kpi_grid.addWidget(card_total)
-
-        # 2. Điểm hợp lệ
-        card_valid = QFrame()
-        card_valid.setStyleSheet("background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;")
-        cv_l = QVBoxLayout(card_valid)
-        cv_l.setContentsMargins(8, 10, 8, 10)
-        cv_l.setSpacing(2)
-        cv_l.setAlignment(Qt.AlignCenter)
         self.kpi_valid_stores = QLabel("0")
-        self.kpi_valid_stores.setStyleSheet("font-size: 22px; font-weight: 800; color: #16a34a; border: none; background: transparent;")
-        self.kpi_valid_stores.setAlignment(Qt.AlignCenter)
-        cv_l.addWidget(self.kpi_valid_stores)
-        lbl_cv = QLabel("Điểm hợp lệ")
-        lbl_cv.setStyleSheet("font-size: 11px; font-weight: 600; color: #15803d; border: none; background: transparent;")
-        lbl_cv.setAlignment(Qt.AlignCenter)
-        cv_l.addWidget(lbl_cv)
-        kpi_grid.addWidget(card_valid)
-
-        # 3. Trùng & Lỗi
-        card_warn = QFrame()
-        card_warn.setStyleSheet("background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;")
-        cw_l = QVBoxLayout(card_warn)
-        cw_l.setContentsMargins(8, 10, 8, 10)
-        cw_l.setSpacing(2)
-        cw_l.setAlignment(Qt.AlignCenter)
         self.kpi_warning_count = QLabel("0")
-        self.kpi_warning_count.setStyleSheet("font-size: 22px; font-weight: 800; color: #d97706; border: none; background: transparent;")
-        self.kpi_warning_count.setAlignment(Qt.AlignCenter)
-        cw_l.addWidget(self.kpi_warning_count)
-        lbl_cw = QLabel("Trùng & Lỗi")
-        lbl_cw.setStyleSheet("font-size: 11px; font-weight: 600; color: #b45309; border: none; background: transparent;")
-        lbl_cw.setAlignment(Qt.AlignCenter)
-        cw_l.addWidget(lbl_cw)
-        kpi_grid.addWidget(card_warn)
-
-        vr_l.addLayout(kpi_grid)
-
-        # Cụm nút Thao tác Báo cáo (Xuất Excel + Trợ lý Gemini)
-        report_btn_row = QHBoxLayout()
-        report_btn_row.setSpacing(8)
-
-        self.btn_export = QPushButton("  Xuất báo cáo Excel")
-        self.btn_export.setIcon(get_svg_icon(SVG_EXCEL, "#ffffff", 16))
-        self.btn_export.setCursor(Qt.PointingHandCursor)
-        self.btn_export.setFixedHeight(38)
-        self.btn_export.setStyleSheet("""
-            QPushButton {
-                background-color: #16a34a;
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #15803d;
-            }
-            QPushButton:disabled {
-                background-color: #94a3b8;
-            }
-        """)
-        self.btn_export.clicked.connect(self.export_to_excel)
-        self.btn_export.setEnabled(False)
-        report_btn_row.addWidget(self.btn_export, 6)
-
-        self.btn_gemini_export = QPushButton("  Trợ lý Gemini")
-        self.btn_gemini_export.setIcon(get_svg_icon(SVG_SPARKLE, "#4f46e5", 16))
-        self.btn_gemini_export.setCursor(Qt.PointingHandCursor)
-        self.btn_gemini_export.setFixedHeight(38)
-        self.btn_gemini_export.setStyleSheet("""
-            QPushButton {
-                background-color: #f5f3ff;
-                color: #4f46e5;
-                border: 1.5px solid #c7d2fe;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #ede9fe;
-            }
-            QPushButton:disabled {
-                color: #94a3b8;
-                border-color: #e2e8f0;
-                background-color: #f8fafc;
-            }
-        """)
-        self.btn_gemini_export.clicked.connect(self.open_gemini_dialog)
-        report_btn_row.addWidget(self.btn_gemini_export, 4)
-
-        vr_l.addLayout(report_btn_row)
-
-        self.view_report.setVisible(False)
-        self.right_main_layout.addWidget(self.view_report)
-
-        top_cards_layout.addWidget(self.right_card, 5)
-        main_vbox.addLayout(top_cards_layout)
-
-        main_vbox.addSpacing(6)
-
-        # Subtitle: Chi tiết điểm bán
-        lbl_detail = QLabel("Chi tiết điểm bán")
-        lbl_detail.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a; border: none;")
-        main_vbox.addWidget(lbl_detail)
 
         # Quick Filter Tabs
         filter_layout = QHBoxLayout()
-        filter_layout.setSpacing(8)
+        filter_layout.setSpacing(6)
 
         self.btn_filter_all = QPushButton("Tất cả (0)")
         self.btn_filter_valid = QPushButton("Hợp lệ (0)")
@@ -1868,7 +1630,7 @@ class MainWindow(QMainWindow):
 
         for btn, f_key in self.filter_buttons:
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
+            btn.setFixedHeight(28)
             btn.clicked.connect(lambda _, k=f_key: self.set_filter(k))
             filter_layout.addWidget(btn)
 
@@ -1877,29 +1639,29 @@ class MainWindow(QMainWindow):
         filter_layout.addStretch()
 
         # Dropdown Lọc Nhân Viên (SR)
-        lbl_sr_icon = QLabel("👤 Nhân viên:")
-        lbl_sr_icon.setStyleSheet("color: #475569; font-size: 12px; font-weight: 600; border: none; background: transparent;")
+        lbl_sr_icon = QLabel("Nhân viên:")
+        lbl_sr_icon.setStyleSheet("color: #475569; font-size: 11.5px; font-weight: 600; border: none; background: transparent;")
         filter_layout.addWidget(lbl_sr_icon)
 
         self.combo_filter_sr = QComboBox()
-        self.combo_filter_sr.setFixedHeight(32)
-        self.combo_filter_sr.setMinimumWidth(180)
+        self.combo_filter_sr.setFixedHeight(28)
+        self.combo_filter_sr.setMinimumWidth(160)
         self.combo_filter_sr.setStyleSheet("""
             QComboBox {
                 background-color: #ffffff;
                 color: #0f172a;
-                font-size: 12px;
+                font-size: 11.5px;
                 font-weight: 600;
                 border: 1px solid #cbd5e1;
-                border-radius: 6px;
-                padding: 2px 10px;
+                border-radius: 5px;
+                padding: 1px 8px;
             }
             QComboBox:hover {
                 border-color: #2563eb;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 20px;
+                width: 18px;
             }
             QComboBox QAbstractItemView {
                 background-color: #ffffff;
@@ -1907,7 +1669,7 @@ class MainWindow(QMainWindow):
                 selection-background-color: #eff6ff;
                 selection-color: #1d4ed8;
                 border: 1px solid #cbd5e1;
-                border-radius: 6px;
+                border-radius: 5px;
                 outline: none;
             }
         """)
@@ -1930,18 +1692,18 @@ class MainWindow(QMainWindow):
         # Search Bar
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Tìm kiếm nhanh theo địa chỉ, nhân viên (SR), công ty, mã timecode...")
-        self.search_box.setFixedHeight(42)
+        self.search_box.setFixedHeight(32)
         self.search_box.setStyleSheet("""
             QLineEdit {
                 background-color: #ffffff;
                 border: 1px solid #cbd5e1;
-                border-radius: 8px;
-                padding: 0 16px;
-                font-size: 13px;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-size: 12px;
                 color: #0f172a;
             }
             QLineEdit:focus {
-                border: 2px solid #2563eb;
+                border: 1.5px solid #2563eb;
                 background-color: #ffffff;
             }
         """)
@@ -1963,46 +1725,46 @@ class MainWindow(QMainWindow):
         self.table.cellClicked.connect(self.on_table_cell_clicked)
         self.table.cellDoubleClicked.connect(lambda r, c: self.on_table_row_double_clicked(r))
 
-        self.table.verticalHeader().setDefaultSectionSize(62)
+        self.table.verticalHeader().setDefaultSectionSize(40)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
         header = self.table.horizontalHeader()
-        header.setFixedHeight(46)
+        header.setFixedHeight(32)
         header.setSectionResizeMode(0, QHeaderView.Fixed)
-        header.resizeSection(0, 46)    # STT
+        header.resizeSection(0, 40)    # STT
         header.setSectionResizeMode(1, QHeaderView.Fixed)
-        header.resizeSection(1, 120)   # Thời gian
+        header.resizeSection(1, 110)   # Thời gian
         header.setSectionResizeMode(2, QHeaderView.Fixed)
-        header.resizeSection(2, 130)   # Nhân viên (SR)
+        header.resizeSection(2, 125)   # Nhân viên (SR)
         header.setSectionResizeMode(3, QHeaderView.Fixed)
-        header.resizeSection(3, 140)   # Công ty
+        header.resizeSection(3, 130)   # Công ty
         header.setSectionResizeMode(4, QHeaderView.Stretch)           # Địa chỉ (Tự co giãn cân đối)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
-        header.resizeSection(5, 125)   # Mã Timemark (Timecode)
+        header.resizeSection(5, 120)   # Mã Timemark (Timecode)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
-        header.resizeSection(6, 105)   # Ảnh
+        header.resizeSection(6, 100)   # Ảnh
         header.setSectionResizeMode(7, QHeaderView.Fixed)
-        header.resizeSection(7, 155)   # Trạng thái
+        header.resizeSection(7, 140)   # Trạng thái
         header.setSectionResizeMode(8, QHeaderView.Fixed)
-        header.resizeSection(8, 80)    # Thao tác
+        header.resizeSection(8, 74)    # Thao tác
 
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #ffffff;
                 alternate-background-color: #fafbfc;
                 border: 1px solid #e2e8f0;
-                border-radius: 10px;
-                font-size: 13px;
+                border-radius: 8px;
+                font-size: 12px;
                 outline: none;
             }
             QHeaderView::section {
                 background-color: #f8fafc;
                 color: #475569;
                 font-weight: 700;
-                font-size: 11.5px;
+                font-size: 11px;
                 border: none;
                 border-bottom: 2px solid #e2e8f0;
-                padding: 4px 6px;
+                padding: 3px 6px;
             }
             QTableWidget::item {
                 border-bottom: 1px solid #f1f5f9;
@@ -2014,19 +1776,19 @@ class MainWindow(QMainWindow):
             QScrollBar:vertical {
                 border: none;
                 background: #f8fafc;
-                width: 8px;
-                border-radius: 4px;
+                width: 7px;
+                border-radius: 3px;
             }
             QScrollBar::handle:vertical {
                 background: #cbd5e1;
-                border-radius: 4px;
-                min-height: 24px;
+                border-radius: 3px;
+                min-height: 20px;
             }
             QScrollBar::handle:vertical:hover {
                 background: #94a3b8;
             }
         """)
-        self.table.setMinimumHeight(320)
+        self.table.setMinimumHeight(240)
         main_vbox.addWidget(self.table)
 
         self.lbl_footer = QLabel("Chưa có dữ liệu phân tích")
@@ -2101,22 +1863,23 @@ class MainWindow(QMainWindow):
 
     def clear_all_files(self):
         self.selected_files.clear()
-        self.refresh_thumbnails()
-        self.update_file_selection_ui()
-        self.view_report.setVisible(False)
-        self.view_waiting.setVisible(True)
-        self.status_title.setText("Sẵn sàng để bắt đầu")
-        self.status_desc.setText("Vui lòng chọn ảnh và nhấn 'Bắt đầu nhận diện' để AI phân tích.")
-        self.progress_bar.setVisible(False)
-        self.btn_export.setEnabled(False)
-        self.btn_gemini_export.setEnabled(False)
+        self.all_results = {}
         self.last_raw_ocr_items.clear()
         self.table.setRowCount(0)
+        self.lbl_selected_count.setText("0 ảnh đã chọn")
+        self.pill_total.setText("Tổng: 0")
+        self.pill_valid.setText("Hợp lệ: 0")
+        self.pill_warn.setText("Trùng/Lỗi: 0")
         self.btn_filter_all.setText("Tất cả (0)")
         self.btn_filter_valid.setText("Hợp lệ (0)")
         self.btn_filter_dup.setText("Trùng lặp (0)")
         self.btn_filter_unrel.setText("Không liên quan (0)")
+        self.btn_export.setEnabled(False)
+        self.btn_open_gemini.setEnabled(False)
+        self.progress_bar.setVisible(False)
         self.lbl_footer.setText("Chưa có dữ liệu phân tích")
+        self.refresh_thumbnails()
+        self.update_file_selection_ui()
 
     def refresh_thumbnails(self):
         while self.thumb_layout.count() > 0:
@@ -2141,218 +1904,30 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(has_files)
 
     def switch_right_tab(self, tab_name: str):
-        if tab_name == "preview":
-            self.view_report.setVisible(False)
-            self.view_waiting.setVisible(True)
-            self.btn_tab_preview.setStyleSheet("""
-                background-color: #064e3b;
-                color: #a7f3d0;
-                font-size: 12px;
-                font-weight: 700;
-                border: 1px solid #059669;
-                border-radius: 6px;
-                padding: 4px 12px;
-            """)
-            self.btn_tab_report.setStyleSheet("""
-                background-color: #f1f5f9;
-                color: #475569;
-                font-size: 12px;
-                font-weight: 600;
-                border: 1px solid #cbd5e1;
-                border-radius: 6px;
-                padding: 4px 12px;
-            """)
-        else:
-            self.view_waiting.setVisible(False)
-            self.view_report.setVisible(True)
-            self.btn_tab_report.setStyleSheet("""
-                background-color: #2563eb;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 700;
-                border: 1px solid #1d4ed8;
-                border-radius: 6px;
-                padding: 4px 12px;
-            """)
-            self.btn_tab_preview.setStyleSheet("""
-                background-color: #f1f5f9;
-                color: #475569;
-                font-size: 12px;
-                font-weight: 600;
-                border: 1px solid #cbd5e1;
-                border-radius: 6px;
-                padding: 4px 12px;
-            """)
+        pass
 
     def toggle_roi_zoom(self):
-        self.is_roi_zoom = not self.is_roi_zoom
-        if self.current_preview_cv_img is not None:
-            self.update_live_preview(self.current_preview_cv_img, self.current_preview_info or {}, self.current_preview_fn)
+        pass
 
     def open_current_fullscreen_preview(self):
-        if not self.current_preview_fn:
-            return
-        match_path = None
-        for p in self.selected_files:
-            if os.path.basename(p) == os.path.basename(self.current_preview_fn):
-                match_path = p
-                break
-        if match_path and os.path.exists(match_path):
-            self.open_full_image_viewer(match_path, self.current_preview_info)
-        elif self.current_preview_cv_img is not None:
-            dlg = ImageViewerDialog(self.current_preview_fn, annotated_img=self.current_preview_cv_img, info=self.current_preview_info, parent=self)
-            dlg.exec()
+        pass
 
     def adjust_preview_frame_aspect(self, cv_img: np.ndarray):
-        """Tự động điều chỉnh chiều rộng của khung preview ôm sát tỉ lệ ảnh (9:16 hoặc 16:9), triệt tiêu hoàn toàn viền thừa 2 bên."""
-        if cv_img is None:
-            return
-        h, w = cv_img.shape[:2]
-        if self.is_roi_zoom:
-            # Vùng crop chữ Timemark ở đáy có tỷ lệ ngang 16:9
-            h_roi = max(int(h * 0.42), 1)
-            aspect = w / h_roi
-        else:
-            aspect = w / max(h, 1)
-
-        # Chiều cao khả dụng trong khung Right Card
-        avail_h = self.preview_frame.height()
-        if avail_h < 300:
-            parent_h = self.view_waiting.height() if hasattr(self, 'view_waiting') else 460
-            avail_h = max(parent_h - 48, 380)
-
-        max_container_w = self.right_card.width() - 40 if hasattr(self, 'right_card') else 720
-        target_w = int(avail_h * aspect) + 10
-
-        # Khống chế kích thước để ôm sát ảnh, triệt tiêu 100% viền đen thừa 2 bên
-        target_w = max(240, min(target_w, max_container_w))
-        self.preview_frame.setFixedWidth(target_w)
+        pass
 
     def update_live_preview(self, cv_img: np.ndarray, info: dict, fn: str = ""):
-        if cv_img is None:
-            return
-
-        self.current_preview_cv_img = cv_img
-        self.current_preview_info = info
-        if fn:
-            self.current_preview_fn = fn
-
-        # Tự động co khung ôm sát tỉ lệ ảnh (9:16 cho ảnh dọc, 16:9 cho ảnh ngang)
-        self.adjust_preview_frame_aspect(cv_img)
-
-        # Xử lý chế độ Soi chữ Timemark (Crop 42% sát đáy ảnh) vs Xem toàn cảnh
-        if self.is_roi_zoom:
-            h, w = cv_img.shape[:2]
-            roi_y = int(h * 0.58)
-            crop_img = cv_img[roi_y:h, 0:w]
-            pix = cv2_to_qpixmap(crop_img)
-            self.btn_toggle_zoom.setText("🖼 Xem toàn cảnh")
-            self.btn_toggle_zoom.setStyleSheet("""
-                QPushButton {
-                    background-color: #064e3b;
-                    color: #a7f3d0;
-                    border: 1px solid #059669;
-                    border-radius: 5px;
-                    font-size: 11px;
-                    font-weight: 700;
-                    padding: 0 10px;
-                }
-                QPushButton:hover { background-color: #047857; }
-            """)
-        else:
-            pix = cv2_to_qpixmap(cv_img)
-            self.btn_toggle_zoom.setText("🔍 Soi chữ Timemark")
-            self.btn_toggle_zoom.setStyleSheet("""
-                QPushButton {
-                    background-color: #f8fafc;
-                    color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 5px;
-                    font-size: 11.5px;
-                    font-weight: 600;
-                    padding: 0 10px;
-                }
-                QPushButton:hover { background-color: #e2e8f0; }
-            """)
-
-        if not pix.isNull():
-            self.preview_placeholder.setVisible(False)
-            self.preview_img_label.setVisible(True)
-            # Scale vừa khít khung đã ôm sát, không còn viền đen thừa
-            frame_w = max(self.preview_frame.width() - 8, 200)
-            frame_h = max(self.preview_frame.height() - 8, 300)
-            scaled = pix.scaled(frame_w, frame_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.preview_img_label.setPixmap(scaled)
-
-        self.status_badge.setText("▶ TRACKING")
-        self.status_badge.setStyleSheet("""
-            background-color: #ecfdf5;
-            color: #047857;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 6px;
-            border: 1px solid #a7f3d0;
-        """)
-        if fn:
-            raw_base = os.path.basename(fn) if fn else ""
-            display_fn = raw_base if len(raw_base) <= 24 else (raw_base[:10] + "..." + raw_base[-10:])
-            self.status_title.setText(f"{display_fn}")
-            self.status_title.setToolTip(f"Đang xem: {raw_base}\nClick ảnh để phóng to vùng chữ Timemark")
-
-        addr = info.get("address") or "--"
-        time_str = info.get("time") or "--:--"
-        date_str = info.get("date") or "--/--/----"
-        gps_str = info.get("gps_text") or "--"
-        is_val = info.get("is_valid", False)
-
-        # Cập nhật Telemetry 1 dòng tinh gọn
-        disp_addr = addr if len(addr) <= 50 else (addr[:47] + "...")
-        self.lbl_tele_addr.setText(f"📍 {disp_addr}")
-        self.lbl_tele_addr.setToolTip(addr)
-        self.lbl_tele_time.setText(f"🕒 {date_str} {time_str}")
-        self.lbl_tele_gps.setText(f"🌐 {gps_str}")
-
-        if is_val:
-            self.lbl_tele_status.setText("Hợp lệ")
-            self.lbl_tele_status.setStyleSheet("""
-                background-color: #ecfdf5;
-                color: #047857;
-                font-size: 10.5px;
-                font-weight: 700;
-                padding: 2px 8px;
-                border-radius: 4px;
-                border: 1px solid #a7f3d0;
-            """)
-        else:
-            self.lbl_tele_status.setText(info.get("reason") or "Không hợp lệ")
-            self.lbl_tele_status.setStyleSheet("""
-                background-color: #fef2f2;
-                color: #b91c1c;
-                font-size: 10.5px;
-                font-weight: 700;
-                padding: 2px 8px;
-                border-radius: 4px;
-                border: 1px solid #fecaca;
-            """)
-
-        n = len(self.analyzed_previews)
-        if n > 0:
-            self.lbl_preview_idx.setText(f"{self.current_preview_idx + 1}/{n}")
-            self.btn_prev_img.setEnabled(self.current_preview_idx > 0)
-            self.btn_next_img.setEnabled(self.current_preview_idx < n - 1)
+        pass
 
     def show_prev_preview(self):
-        if self.current_preview_idx > 0:
-            self.current_preview_idx -= 1
-            item = self.analyzed_previews[self.current_preview_idx]
-            self.update_live_preview(item["img"], item["info"], item["fn"])
+        pass
 
     def show_next_preview(self):
-        if self.current_preview_idx < len(self.analyzed_previews) - 1:
-            self.current_preview_idx += 1
-            item = self.analyzed_previews[self.current_preview_idx]
-            self.update_live_preview(item["img"], item["info"], item["fn"])
+        pass
+
+    def open_zalo_dialog(self):
+        dlg = ZaloImportDialog(parent=self)
+        dlg.packs_imported.connect(self.add_files)
+        dlg.exec()
 
     def on_table_cell_clicked(self, row: int, col: int):
         if not hasattr(self, 'all_results') or not self.all_results:
@@ -2376,25 +1951,6 @@ class MainWindow(QMainWindow):
         if col == 6 and match_path:
             self.open_full_image_viewer(match_path, row_data)
             return
-
-        # Còn lại: hiển thị preview trên Right Card
-        found_idx = -1
-        for i, item in enumerate(self.analyzed_previews):
-            if item["fn"] == target_fn:
-                found_idx = i
-                break
-
-        if found_idx != -1:
-            self.current_preview_idx = found_idx
-            self.switch_right_tab("preview")
-            item = self.analyzed_previews[found_idx]
-            self.update_live_preview(item["img"], item["info"], item["fn"])
-        elif match_path:
-            engine = get_ocr_engine()
-            ann = engine.get_annotated_preview(match_path)
-            if ann is not None:
-                self.switch_right_tab("preview")
-                self.update_live_preview(ann, row_data, target_fn)
 
     def on_table_row_double_clicked(self, row: int):
         if not hasattr(self, 'all_results') or not self.all_results:
@@ -2428,28 +1984,9 @@ class MainWindow(QMainWindow):
         self.dropzone.setEnabled(False)
         self.btn_clear_all.setEnabled(False)
         self.btn_export.setEnabled(False)
-        self.btn_gemini_export.setEnabled(False)
+        self.btn_open_gemini.setEnabled(False)
 
-        # Chuyển sang giao diện tiến trình đang chạy & xem trực quan OCR
-        self.analyzed_previews = []
-        self.current_preview_idx = -1
-        self.lbl_preview_idx.setText("0/0")
-        self.btn_prev_img.setEnabled(False)
-        self.btn_next_img.setEnabled(False)
-
-        self.switch_right_tab("preview")
-        self.status_badge.setText("ĐANG QUÉT")
-        self.status_badge.setStyleSheet("""
-            background-color: #ecfdf5;
-            color: #047857;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 6px;
-            border: 1px solid #a7f3d0;
-        """)
-        self.status_title.setText("Đang phân tích OCR trực quan...")
-        self.status_desc.setText("Đang khởi động công cụ AI...")
+        self.lbl_selected_count.setText("Đang khởi động AI...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(10)
 
@@ -2460,31 +1997,20 @@ class MainWindow(QMainWindow):
         self.worker_thread.start()
 
     def on_worker_progress(self, data: dict):
-        msg = data.get("message", "")
-        self.status_desc.setText(msg)
-
-        task_idx = data.get("task_index", 0)
         curr = data.get("progress_current", 0)
         tot = data.get("progress_total", 0)
+        task_idx = data.get("task_index", 0)
 
         if task_idx == 2:
             if tot > 0:
                 pct = 15 + int((curr / tot) * 70)
                 self.progress_bar.setValue(min(pct, 85))
+                self.lbl_selected_count.setText(f"Đang nhận diện: {curr}/{tot} ảnh...")
             else:
                 self.progress_bar.setValue(40)
-
-            # CẬP NHẬT PREVIEW TRỰC QUAN THỜI GIAN THỰC
-            ann_img = data.get("annotated_image")
-            fn = data.get("filename", "")
-            info = data.get("info", {})
-            if ann_img is not None:
-                self.analyzed_previews.append({"fn": fn, "img": ann_img, "info": info})
-                self.current_preview_idx = len(self.analyzed_previews) - 1
-                self.update_live_preview(ann_img, info, fn=fn)
-
         elif task_idx == 3:
             self.progress_bar.setValue(90)
+            self.lbl_selected_count.setText("Đang gom nhóm và đối soát điểm bán...")
         elif task_idx == 4:
             self.progress_bar.setValue(100)
 
@@ -2495,33 +2021,18 @@ class MainWindow(QMainWindow):
         self.dropzone.setEnabled(True)
         self.btn_clear_all.setEnabled(True)
         self.btn_export.setEnabled(True)
-        self.btn_gemini_export.setEnabled(True)
-
-        self.status_badge.setText("HOÀN TẤT")
-        self.status_badge.setStyleSheet("""
-            background-color: #f0fdf4;
-            color: #16a34a;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 6px;
-            border: 1px solid #bbf7d0;
-        """)
-        self.status_title.setText("Đã hoàn tất phân tích OCR")
-        self.status_desc.setText("AI đã track chính xác vùng chữ & đối soát điểm bán thành công.")
-        self.progress_bar.setValue(100)
-
-        # Mặc định hiển thị tab Báo cáo kết quả, nhưng người dùng có thể bấm sang Tab Preview bất cứ lúc nào
-        self.switch_right_tab("report")
+        self.btn_open_gemini.setEnabled(True)
+        self.progress_bar.setVisible(False)
 
         summary = results.get("summary", {})
         total_imgs = summary.get("total_images", 0)
         valid_stores = summary.get("valid_stores", 0)
         warning_cnt = summary.get("warning_total", 0)
 
-        self.kpi_total_imgs.setText(str(total_imgs))
-        self.kpi_valid_stores.setText(str(valid_stores))
-        self.kpi_warning_count.setText(str(warning_cnt))
+        self.pill_total.setText(f"Tổng: {total_imgs}")
+        self.pill_valid.setText(f"Hợp lệ: {valid_stores}")
+        self.pill_warn.setText(f"Trùng/Lỗi: {warning_cnt}")
+        self.lbl_selected_count.setText(f"{total_imgs} ảnh ({valid_stores} điểm bán)")
 
         details = results.get("details", [])
         c_all = len(details)
@@ -2559,9 +2070,9 @@ class MainWindow(QMainWindow):
         for sr_name, s_data in staff_summary.items():
             st_cnt = s_data.get("total_stores", 0)
             p_cnt = s_data.get("total_photos", 0)
-            self.combo_filter_sr.addItem(f"👤 {sr_name} ({st_cnt} điểm - {p_cnt} ảnh)", sr_name)
+            self.combo_filter_sr.addItem(f"{sr_name} ({st_cnt} điểm - {p_cnt} ảnh)", sr_name)
 
-            btn_chip = QPushButton(f"👤 {sr_name}: {st_cnt} điểm ({p_cnt} ảnh)")
+            btn_chip = QPushButton(f"{sr_name}: {st_cnt} điểm ({p_cnt} ảnh)")
             btn_chip.setCursor(Qt.PointingHandCursor)
             btn_chip.clicked.connect(lambda _, k=sr_name: self.set_staff_filter_from_chip(k))
             self.staff_chip_layout.addWidget(btn_chip)
@@ -2579,11 +2090,8 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         self.dropzone.setEnabled(True)
         self.btn_clear_all.setEnabled(True)
-        self.view_report.setVisible(False)
-        self.view_waiting.setVisible(True)
-        self.status_title.setText("Có lỗi xảy ra")
-        self.status_desc.setText(err_msg)
         self.progress_bar.setVisible(False)
+        self.lbl_selected_count.setText("Lỗi nhận diện!")
         QMessageBox.critical(self, "Lỗi phân tích", f"Không thể xử lý ảnh:\n{err_msg}")
 
     def populate_table(self, rows: List[Dict[str, Any]]):
@@ -2623,12 +2131,12 @@ class MainWindow(QMainWindow):
             self.table.setItem(r_idx, 1, QTableWidgetItem(""))
             time_widget = QWidget()
             tw_l = QVBoxLayout(time_widget)
-            tw_l.setContentsMargins(4, 6, 4, 6)
-            tw_l.setSpacing(2)
+            tw_l.setContentsMargins(2, 2, 2, 2)
+            tw_l.setSpacing(1)
             tw_l.setAlignment(Qt.AlignCenter)
 
             d_lbl = QLabel(date_str)
-            d_lbl.setStyleSheet("font-size: 11.5px; font-weight: 700; color: #1e293b; border: none; background: transparent;")
+            d_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #1e293b; border: none; background: transparent;")
             d_lbl.setAlignment(Qt.AlignCenter)
             tw_l.addWidget(d_lbl)
 
@@ -2636,40 +2144,40 @@ class MainWindow(QMainWindow):
             t_badge.setStyleSheet("""
                 background-color: #f1f5f9;
                 color: #475569;
-                font-size: 10.5px;
+                font-size: 10px;
                 font-weight: 600;
-                padding: 1px 8px;
-                border-radius: 6px;
+                padding: 1px 6px;
+                border-radius: 4px;
                 border: 1px solid #e2e8f0;
             """)
             t_badge.setAlignment(Qt.AlignCenter)
             tw_l.addWidget(t_badge)
             self.table.setCellWidget(r_idx, 1, time_widget)
 
-            # 2. Nhân viên SR (Tên nhân viên sạch, bỏ avatar tròn thừa)
+            # 2. Nhân viên SR (Tên nhân viên sạch)
             self.table.setItem(r_idx, 2, QTableWidgetItem(""))
             sr_widget = QWidget()
             sw_l = QHBoxLayout(sr_widget)
-            sw_l.setContentsMargins(10, 6, 10, 6)
+            sw_l.setContentsMargins(8, 2, 8, 2)
             sw_l.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
             if sr and sr != "--":
                 name_lbl = QLabel(sr)
-                name_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #334155; border: none; background: transparent;")
+                name_lbl.setStyleSheet("font-size: 11.5px; font-weight: 600; color: #334155; border: none; background: transparent;")
                 sw_l.addWidget(name_lbl)
             else:
                 dash_lbl = QLabel("--")
-                dash_lbl.setStyleSheet("color: #94a3b8; font-size: 12px; border: none; background: transparent;")
+                dash_lbl.setStyleSheet("color: #94a3b8; font-size: 11.5px; border: none; background: transparent;")
                 sw_l.addWidget(dash_lbl)
             sw_l.addStretch()
             self.table.setCellWidget(r_idx, 2, sr_widget)
 
-            # 3. Công ty (Badge doanh nghiệp thanh nhã)
+            # 3. Công ty
             self.table.setItem(r_idx, 3, QTableWidgetItem(""))
             cp_widget = QWidget()
             cw_l = QHBoxLayout(cp_widget)
-            cw_l.setContentsMargins(6, 6, 6, 6)
-            cw_l.setSpacing(6)
+            cw_l.setContentsMargins(4, 2, 4, 2)
+            cw_l.setSpacing(4)
             cw_l.setAlignment(Qt.AlignCenter)
 
             if company and company != "--":
@@ -2677,42 +2185,42 @@ class MainWindow(QMainWindow):
                 cp_badge.setStyleSheet("""
                     background-color: #f8fafc;
                     color: #334155;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 600;
-                    padding: 4px 10px;
-                    border-radius: 6px;
+                    padding: 2px 8px;
+                    border-radius: 5px;
                     border: 1px solid #e2e8f0;
                 """)
                 cp_badge.setAlignment(Qt.AlignCenter)
                 cw_l.addWidget(cp_badge)
             else:
                 dash_cp = QLabel("--")
-                dash_cp.setStyleSheet("color: #94a3b8; font-size: 12px; border: none; background: transparent;")
+                dash_cp.setStyleSheet("color: #94a3b8; font-size: 11.5px; border: none; background: transparent;")
                 cw_l.addWidget(dash_cp)
             self.table.setCellWidget(r_idx, 3, cp_widget)
 
-            # 4. Địa chỉ điểm bán (Chữ sạch, rõ nét, bỏ icon pin)
+            # 4. Địa chỉ điểm bán
             self.table.setItem(r_idx, 4, QTableWidgetItem(""))
             addr_widget = QWidget()
             aw_l = QHBoxLayout(addr_widget)
-            aw_l.setContentsMargins(12, 6, 12, 6)
+            aw_l.setContentsMargins(8, 2, 8, 2)
             aw_l.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
             txt_addr = QLabel(address)
             txt_addr.setWordWrap(True)
             if status == "unrelated":
-                txt_addr.setStyleSheet("font-size: 12px; color: #b91c1c; font-style: italic; font-weight: 500; border: none; background: transparent;")
+                txt_addr.setStyleSheet("font-size: 11px; color: #b91c1c; font-style: italic; font-weight: 500; border: none; background: transparent;")
             else:
-                txt_addr.setStyleSheet("font-size: 12.5px; color: #0f172a; font-weight: 600; border: none; background: transparent;")
+                txt_addr.setStyleSheet("font-size: 11.5px; color: #0f172a; font-weight: 600; border: none; background: transparent;")
             txt_addr.setToolTip(address)
             aw_l.addWidget(txt_addr, stretch=1)
             self.table.setCellWidget(r_idx, 4, addr_widget)
 
-            # 5. Mã Timemark / Timecode (Hiển thị trực tiếp ra bảng)
+            # 5. Mã Timemark / Timecode
             self.table.setItem(r_idx, 5, QTableWidgetItem(""))
             tm_widget = QWidget()
             tm_l = QHBoxLayout(tm_widget)
-            tm_l.setContentsMargins(4, 6, 4, 6)
+            tm_l.setContentsMargins(4, 2, 4, 2)
             tm_l.setAlignment(Qt.AlignCenter)
 
             if tm_code and tm_code != "--":
@@ -2720,26 +2228,26 @@ class MainWindow(QMainWindow):
                 lbl_tm.setStyleSheet("""
                     background-color: #eff6ff;
                     color: #1d4ed8;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    padding: 3px 8px;
-                    border-radius: 6px;
+                    padding: 2px 6px;
+                    border-radius: 4px;
                     border: 1px solid #bfdbfe;
                 """)
                 lbl_tm.setAlignment(Qt.AlignCenter)
                 tm_l.addWidget(lbl_tm)
             else:
                 dash_tm = QLabel("--")
-                dash_tm.setStyleSheet("color: #94a3b8; font-size: 12px; border: none; background: transparent;")
+                dash_tm.setStyleSheet("color: #94a3b8; font-size: 11.5px; border: none; background: transparent;")
                 dash_tm.setAlignment(Qt.AlignCenter)
                 tm_l.addWidget(dash_tm)
             self.table.setCellWidget(r_idx, 5, tm_widget)
 
-            # 6. Hình ảnh (Thumbnail bo góc & Pill số lượng ảnh)
+            # 6. Hình ảnh
             self.table.setItem(r_idx, 6, QTableWidgetItem(""))
             badge_widget = QWidget()
             bw_l = QHBoxLayout(badge_widget)
-            bw_l.setContentsMargins(6, 6, 6, 6)
+            bw_l.setContentsMargins(4, 2, 4, 2)
             bw_l.setSpacing(6)
             bw_l.setAlignment(Qt.AlignCenter)
 
@@ -2751,12 +2259,12 @@ class MainWindow(QMainWindow):
                     break
 
             thumb_lbl = QLabel()
-            thumb_lbl.setFixedSize(40, 32)
+            thumb_lbl.setFixedSize(36, 26)
             thumb_lbl.setCursor(Qt.PointingHandCursor)
-            thumb_lbl.setStyleSheet("border-radius: 6px; border: 1px solid #cbd5e1; background-color: #f1f5f9;")
+            thumb_lbl.setStyleSheet("border-radius: 4px; border: 1px solid #cbd5e1; background-color: #f1f5f9;")
             thumb_lbl.setAlignment(Qt.AlignCenter)
             if match_path:
-                pix = safe_load_pixmap(match_path, 38, 30)
+                pix = safe_load_pixmap(match_path, 34, 24)
                 if not pix.isNull():
                     thumb_lbl.setPixmap(pix)
                 thumb_lbl.mousePressEvent = lambda ev, p=match_path, d=row_data: self.open_full_image_viewer(p, d)
@@ -2766,20 +2274,20 @@ class MainWindow(QMainWindow):
                 cnt_style = """
                     background-color: #eff6ff;
                     color: #2563eb;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    padding: 3px 8px;
-                    border-radius: 10px;
+                    padding: 2px 6px;
+                    border-radius: 8px;
                     border: 1px solid #bfdbfe;
                 """
             else:
                 cnt_style = """
                     background-color: #f1f5f9;
                     color: #475569;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 600;
-                    padding: 3px 8px;
-                    border-radius: 10px;
+                    padding: 2px 6px;
+                    border-radius: 8px;
                     border: 1px solid #e2e8f0;
                 """
             cnt_pill = QLabel(f"{count} ảnh")
@@ -2787,11 +2295,11 @@ class MainWindow(QMainWindow):
             bw_l.addWidget(cnt_pill)
             self.table.setCellWidget(r_idx, 6, badge_widget)
 
-            # 7. Trạng thái (Pill status sạch, bỏ icon/emoji rác)
+            # 7. Trạng thái
             self.table.setItem(r_idx, 7, QTableWidgetItem(""))
             status_container = QWidget()
             sc_l = QHBoxLayout(status_container)
-            sc_l.setContentsMargins(4, 4, 4, 4)
+            sc_l.setContentsMargins(2, 2, 2, 2)
             sc_l.setAlignment(Qt.AlignCenter)
 
             stat_lbl = QLabel()
@@ -2801,10 +2309,10 @@ class MainWindow(QMainWindow):
                     background-color: #ecfdf5;
                     color: #047857;
                     border: 1px solid #a7f3d0;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    padding: 5px 12px;
-                    border-radius: 12px;
+                    padding: 3px 8px;
+                    border-radius: 10px;
                 """)
             elif status == "duplicate":
                 dup_cnt = max(1, count - 1)
@@ -2814,10 +2322,10 @@ class MainWindow(QMainWindow):
                     background-color: #fffbeb;
                     color: #b45309;
                     border: 1px solid #fde68a;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    padding: 5px 12px;
-                    border-radius: 12px;
+                    padding: 3px 8px;
+                    border-radius: 10px;
                 """)
             else:
                 stat_lbl.setText("Không liên quan")
@@ -2825,31 +2333,31 @@ class MainWindow(QMainWindow):
                     background-color: #fef2f2;
                     color: #b91c1c;
                     border: 1px solid #fecaca;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    padding: 5px 12px;
-                    border-radius: 12px;
+                    padding: 3px 8px;
+                    border-radius: 10px;
                 """)
             sc_l.addWidget(stat_lbl)
             self.table.setCellWidget(r_idx, 7, status_container)
 
-            # 8. Nút Thao tác (Modern soft button)
+            # 8. Nút Thao tác
             self.table.setItem(r_idx, 8, QTableWidgetItem(""))
             btn_container = QWidget()
             bc_l = QHBoxLayout(btn_container)
-            bc_l.setContentsMargins(4, 4, 4, 4)
+            bc_l.setContentsMargins(2, 2, 2, 2)
             bc_l.setAlignment(Qt.AlignCenter)
 
             btn_view = QPushButton("Chi tiết")
             btn_view.setCursor(Qt.PointingHandCursor)
-            btn_view.setFixedSize(72, 28)
+            btn_view.setFixedSize(64, 24)
             btn_view.setStyleSheet("""
                 QPushButton {
                     background-color: #ffffff;
                     color: #2563eb;
                     border: 1px solid #bfdbfe;
-                    border-radius: 6px;
-                    font-size: 11.5px;
+                    border-radius: 5px;
+                    font-size: 11px;
                     font-weight: 600;
                 }
                 QPushButton:hover {
@@ -3195,6 +2703,45 @@ class MainWindow(QMainWindow):
             parent=self
         )
         dlg.exec()
+
+    def open_web_gemini_evaluator(self):
+        engine = get_ocr_engine()
+        if not self.last_raw_ocr_items and not self.all_results:
+            QMessageBox.warning(self, "Chưa có dữ liệu", "Vui lòng chọn ảnh và chạy phân tích OCR trước khi gửi cho Gemini!")
+            return
+
+        raw_records = []
+        if self.last_raw_ocr_items:
+            raw_records = engine.format_gemini_export_records(self.last_raw_ocr_items)
+        elif self.all_results and "grouped_stores" in self.all_results:
+            for store in self.all_results["grouped_stores"]:
+                for it in store.get("items", []):
+                    raw_records.append({
+                        "id": len(raw_records) + 1,
+                        "filename": it.get("filename", ""),
+                        "sr": it.get("sr_name", "") or it.get("sr", ""),
+                        "company": it.get("company_name", "") or it.get("company", ""),
+                        "address": it.get("address", ""),
+                        "gps": it.get("gps", ""),
+                        "date": it.get("date", ""),
+                        "time": it.get("time", "")
+                    })
+
+        prompt = engine.get_gemini_cleaning_prompt(raw_records)
+        QApplication.clipboard().setText(prompt)
+
+        # Mở trình duyệt web sang Gemini (kèm Extension nếu có Chrome)
+        ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extensions", "gemini_evaluator")
+        launch_browser_with_extension("https://gemini.google.com/app", [ext_path])
+
+        QMessageBox.information(
+            self,
+            "Đã mở Web Gemini",
+            f"Đã sao chép dữ liệu JSON ({len(raw_records)} ảnh) và Prompt chấm điểm vào Clipboard!\n\n"
+            f"Trang web Gemini đang được mở trên trình duyệt.\n"
+            f"• Tiện ích Gemini Evaluator sẽ tự động nạp prompt và bấm gửi để chấm điểm bán.\n"
+            f"• Hoặc bạn chỉ cần bấm Ctrl+V vào ô chat của Gemini để bắt đầu chấm điểm."
+        )
 
     def apply_gemini_cleaned_data(self, cleaned_data: list):
         if not cleaned_data:
